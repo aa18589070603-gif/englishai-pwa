@@ -1,16 +1,28 @@
 const $=id=>document.getElementById(id);
 const {parseSubtitles,compareText,clozeFor,quizFor}=EnglishAICore;
+const {normalizeWord,localDefinition,parseDictionary,parseTranslation,readWordbook,writeWordbook,upsertWord}=EnglishAIVocab;
 let cues=[],idx=-1,videoURL=null,recURL=null,stream=null,recorder=null,chunks=[],recognition=null,clozeOffset=0,quizIndex=0,quizAnswered=false,activeUtterance=null;
+let storage=null;try{storage=window.localStorage}catch{}
+let wordbook=storage?readWordbook(storage):[],currentWord=null,wordRequest=0,reviewIndex=0;
 const sample='1\n00:00:01,000 --> 00:00:04,000\nHello, how are you?\n你好，你好吗？\n\n2\n00:00:04,000 --> 00:00:07,000\nI am learning English every day.\n我每天都在学习英语。\n\n3\n00:00:07,000 --> 00:00:10,000\nPractice makes progress.\n练习带来进步。\n\n4\n00:00:10,000 --> 00:00:13,000\nLet us try one more time.\n我们再试一次。';
 
 function setFeedback(id,message,kind=''){
   const el=$(id);el.textContent=message;el.className='feedback '+kind;
 }
 function currentCue(){return idx>=0?cues[idx]:null}
+function renderWords(root,text,cue){
+  for(const part of text.split(/([A-Za-z]+(?:['’][A-Za-z]+)?)/g)){
+    if(/^[A-Za-z]+(?:['’][A-Za-z]+)?$/.test(part)){
+      const button=document.createElement('button');button.type='button';button.className='word-token';button.textContent=part;
+      button.setAttribute('aria-label','查看单词 '+part);button.onclick=event=>{event.stopPropagation();openWord(part,cue)};
+      root.append(button);
+    }else if(part)root.append(document.createTextNode(part));
+  }
+}
 function renderLines(){
   const root=$('lines');root.replaceChildren();$('cueCount').textContent=cues.length+' 句';
   if(!cues.length){root.textContent='没有有效字幕，请导入 SRT / VTT 或载入示例。';return}
-  cues.forEach((cue,i)=>{const el=document.createElement('button');el.type='button';el.className='line'+(i===idx?' active':'');const en=document.createElement('span');en.textContent=(i+1)+'. '+cue.en;const zh=document.createElement('span');zh.className='zh';zh.textContent=cue.zh;el.append(en,zh);el.onclick=()=>select(i,true);root.append(el)});
+  cues.forEach((cue,i)=>{const el=document.createElement('div');el.className='line'+(i===idx?' active':'');el.setAttribute('role','button');el.tabIndex=0;const en=document.createElement('span');en.append(document.createTextNode((i+1)+'. '));renderWords(en,cue.en,cue);const zh=document.createElement('span');zh.className='zh';zh.textContent=cue.zh;el.append(en,zh);el.onclick=()=>select(i,true);el.onkeydown=event=>{if(event.target===el&&(event.key==='Enter'||event.key===' ')){event.preventDefault();select(i,true)}};root.append(el)});
 }
 function renderPractice(){
   const cue=currentCue();document.querySelector('[data-current-en]').textContent=cue?.en||'请先载入字幕。';
@@ -21,7 +33,8 @@ function renderPractice(){
 }
 function select(i,play=false){
   if(i<0||i>=cues.length)return;
-  idx=i;clozeOffset=0;const cue=cues[i];$('current').textContent=cue.en+(cue.zh?'\n'+cue.zh:'');
+  idx=i;clozeOffset=0;const cue=cues[i],current=$('current');current.replaceChildren();renderWords(current,cue.en,cue);
+  if(cue.zh){const zh=document.createElement('div');zh.className='zh';zh.textContent=cue.zh;current.append(zh)}
   renderLines();renderPractice();
   if(videoURL){$('player').currentTime=cue.start;if(play)$('player').play().catch(()=>{})}
 }
@@ -67,6 +80,80 @@ function renderQuiz(){
   if(!quiz)return;
   quiz.options.forEach(option=>{const button=document.createElement('button');button.type='button';button.textContent=option;button.onclick=()=>{if(quizAnswered)return;quizAnswered=true;const correct=option===quiz.answer;button.classList.add(correct?'correct':'wrong');setFeedback('quizFeedback',correct?'答对了。':'这句的参考译文是：'+quiz.answer,correct?'good':'needs-work');root.querySelectorAll('button').forEach(b=>{b.disabled=true;if(b.textContent===quiz.answer)b.classList.add('correct')})};root.append(button)});
 }
+function renderWordMeaning(){
+  if(!currentWord)return;
+  $('wordPhonetic').textContent=[currentWord.phonetic,currentWord.partOfSpeech].filter(Boolean).join(' · ');
+  $('wordTranslation').textContent=currentWord.translation||'暂无中文词义';
+  $('wordDefinition').textContent=currentWord.definition?'英文释义：'+currentWord.definition:'英文释义暂不可用';
+  $('wordExample').textContent=currentWord.example?'词典例句：'+currentWord.example:'';
+  $('wordContext').textContent='所在句：'+currentWord.sentence+(currentWord.sentenceZh?'\n整句译文：'+currentWord.sentenceZh:'');
+}
+async function dictionaryJson(url){
+  const response=await fetch(url);if(!response.ok)throw Error('词典暂不可用');return response.json();
+}
+async function openWord(value,cue){
+  const word=normalizeWord(value);if(!word)return;
+  const request=++wordRequest,saved=wordbook.find(item=>item.word===word),seed=localDefinition(word);
+  currentWord={word,translation:saved?.translation||seed?.translation||'',definition:saved?.definition||seed?.definition||'',phonetic:saved?.phonetic||'',partOfSpeech:saved?.partOfSpeech||'',example:saved?.example||'',sentence:cue.en,sentenceZh:cue.zh||'',note:saved?.note||''};
+  $('wordTitle').textContent=value;$('wordNote').value=currentWord.note;$('wordSheet').classList.remove('hidden');
+  $('wordStatus').textContent='正在查询词典…';renderWordMeaning();$('closeWord').focus();
+  const translationUrl='https://api.mymemory.translated.net/get?q='+encodeURIComponent(word)+'&langpair=en%7Czh-CN';
+  const results=await Promise.allSettled([
+    dictionaryJson('https://api.dictionaryapi.dev/api/v2/entries/en/'+encodeURIComponent(word)),
+    dictionaryJson(translationUrl)
+  ]);
+  if(request!==wordRequest||!currentWord||currentWord.word!==word)return;
+  const dictionary=results[0].status==='fulfilled'?parseDictionary(results[0].value):null;
+  const translation=results[1].status==='fulfilled'?parseTranslation(results[1].value):'';
+  if(dictionary)Object.assign(currentWord,dictionary);
+  if(translation&&!seed)currentWord.translation=translation;
+  renderWordMeaning();
+  $('wordStatus').textContent=dictionary||translation||seed?'词义仅供参考；可以收藏或写下自己的理解。':'在线词典暂不可用；仍可根据整句译文写笔记并保存。';
+}
+function renderReview(){
+  if(!wordbook.length){$('reviewWord').textContent='收藏单词后可复习。';$('reviewCount').textContent='0 / 0';$('reviewAnswer').classList.add('hidden');return}
+  reviewIndex%=wordbook.length;const item=wordbook[reviewIndex];
+  $('reviewWord').textContent=item.word;$('reviewCount').textContent=(reviewIndex+1)+' / '+wordbook.length;
+  $('reviewAnswer').textContent=[item.translation,item.definition,item.note?'笔记：'+item.note:''].filter(Boolean).join('\n')||'暂无释义，可点上方单词补充笔记。';
+  $('reviewAnswer').classList.add('hidden');
+}
+function renderWordbook(){
+  $('wordCount').textContent=wordbook.length;const list=$('wordList');list.replaceChildren();
+  if(!wordbook.length)list.textContent='还没有收藏单词。点字幕中的英文单词开始。';
+  wordbook.forEach(item=>{
+    const row=document.createElement('div');row.className='word-row';
+    const open=document.createElement('button');open.type='button';open.textContent=item.word;
+    const detail=document.createElement('small');detail.textContent=item.translation+(item.note?' · 有笔记':'');open.append(detail);
+    open.onclick=()=>openWord(item.word,{en:item.sentence||item.word,zh:item.sentenceZh||''});
+    const remove=document.createElement('button');remove.type='button';remove.className='remove-word';remove.textContent='移除';remove.setAttribute('aria-label','移除 '+item.word);
+    remove.onclick=()=>{wordbook=wordbook.filter(x=>x.word!==item.word);if(storage)writeWordbook(storage,wordbook);reviewIndex=0;renderWordbook()};
+    row.append(open,remove);list.append(row);
+  });
+  const notes=$('noteList');notes.replaceChildren();
+  const withNotes=wordbook.filter(item=>item.note);
+  if(!withNotes.length)notes.textContent='还没有笔记。点单词后写下自己的理解。';
+  withNotes.forEach(item=>{const button=document.createElement('button');button.type='button';button.className='note-row';button.textContent=item.word+'：'+item.note;button.onclick=()=>openWord(item.word,{en:item.sentence||item.word,zh:item.sentenceZh||''});notes.append(button)});
+  renderReview();
+}
+function saveCurrentWord(requireNote){
+  if(!currentWord)return;
+  const note=$('wordNote').value.trim();
+  if(requireNote&&!note){$('wordStatus').textContent='先在“我的笔记”写一句话，再加入笔记本。';$('wordNote').focus();return}
+  currentWord.note=note;
+  wordbook=upsertWord(wordbook,{...currentWord,savedAt:new Date().toISOString()});
+  const persisted=storage&&writeWordbook(storage,wordbook);
+  $('wordStatus').textContent=persisted?(requireNote?'已加入笔记本，稍后可以复习。':'已收藏到单词本。'):'已临时收藏；此浏览器未允许永久存储。';
+  reviewIndex=0;renderWordbook();
+}
+$('openWordbook').onclick=()=>{$('wordbook').classList.remove('hidden');renderWordbook()};
+$('closeWordbook').onclick=()=>$('wordbook').classList.add('hidden');
+$('closeWord').onclick=()=>{$('wordSheet').classList.add('hidden');wordRequest++;currentWord=null};
+$('wordSheet').onclick=event=>{if(event.target===$('wordSheet'))$('closeWord').click()};
+$('saveWord').onclick=()=>saveCurrentWord(false);
+$('saveNote').onclick=()=>saveCurrentWord(true);
+$('revealWord').onclick=()=>$('reviewAnswer').classList.remove('hidden');
+$('nextWord').onclick=()=>{if(wordbook.length){reviewIndex++;renderReview()}};
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('wordSheet').classList.contains('hidden'))$('closeWord').click()});
 document.querySelectorAll('.mode').forEach(button=>button.onclick=()=>{
   document.querySelectorAll('.mode').forEach(b=>{const active=b===button;b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active))});
   document.querySelectorAll('.panel').forEach(panel=>panel.classList.toggle('hidden',panel.id!==button.dataset.mode));
@@ -112,5 +199,5 @@ $('recognize').onclick=()=>{
     $('recognize').disabled=true;setFeedback('speechFeedback','正在聆听，请朗读当前句。');recognition.start();
   }catch(error){$('recognize').disabled=false;setFeedback('speechFeedback','无法开始识别：'+error.message,'needs-work')}
 };
-renderLines();renderPractice();
+renderLines();renderPractice();renderWordbook();
 if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
