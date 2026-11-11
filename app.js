@@ -1,9 +1,9 @@
 const $=id=>document.getElementById(id);
 const {parseSubtitles,compareText,clozeFor,quizFor}=EnglishAICore;
-const {normalizeWord,localDefinition,parseDictionary,parseTranslation,readWordbook,writeWordbook,upsertWord}=EnglishAIVocab;
+const {normalizeWord,localDefinition,parseDictionary,parseTranslation,readWordbook,writeWordbook,upsertWord,dueWords,rateReview}=EnglishAIVocab;
 let cues=[],idx=-1,videoURL=null,recURL=null,stream=null,recorder=null,chunks=[],recognition=null,clozeOffset=0,quizIndex=0,quizAnswered=false,activeUtterance=null;
 let storage=null;try{storage=window.localStorage}catch{}
-let wordbook=storage?readWordbook(storage):[],currentWord=null,wordRequest=0,reviewIndex=0;
+let wordbook=storage?readWordbook(storage):[],currentWord=null,wordRequest=0,reviewIndex=0,reviewAll=false;
 const sample='1\n00:00:01,000 --> 00:00:04,000\nHello, how are you?\n你好，你好吗？\n\n2\n00:00:04,000 --> 00:00:07,000\nI am learning English every day.\n我每天都在学习英语。\n\n3\n00:00:07,000 --> 00:00:10,000\nPractice makes progress.\n练习带来进步。\n\n4\n00:00:10,000 --> 00:00:13,000\nLet us try one more time.\n我们再试一次。';
 
 function setFeedback(id,message,kind=''){
@@ -110,22 +110,27 @@ async function openWord(value,cue){
   renderWordMeaning();
   $('wordStatus').textContent=dictionary||translation||seed?'词义仅供参考；可以收藏或写下自己的理解。':'在线词典暂不可用；仍可根据整句译文写笔记并保存。';
 }
+function reviewQueue(){return reviewAll?wordbook:dueWords(wordbook)}
 function renderReview(){
-  $('hearReviewWord').disabled=!wordbook.length;
+  const queue=reviewQueue(),due=dueWords(wordbook).length;
+  $('dueCount').textContent=due+' 个单词待复习'+(reviewAll?' · 正在浏览全部':'');
+  $('reviewAll').textContent=reviewAll?'只看待复习':'复习全部';
+  for(const id of ['hearReviewWord','revealWord','rememberWord','againWord','nextWord'])$(id).disabled=!queue.length;
+  $('reviewAll').disabled=!wordbook.length;
   $('reviewSpeechStatus').textContent='';
-  if(!wordbook.length){$('reviewWord').textContent='收藏单词后可复习。';$('reviewCount').textContent='0 / 0';$('reviewAnswer').classList.add('hidden');return}
-  reviewIndex%=wordbook.length;const item=wordbook[reviewIndex];
-  $('reviewWord').textContent=item.word;$('reviewCount').textContent=(reviewIndex+1)+' / '+wordbook.length;
+  if(!queue.length){$('reviewWord').textContent=wordbook.length?'本轮复习完成。想继续练习可点“复习全部”。':'收藏单词后可复习。';$('reviewCount').textContent='0 / 0';$('reviewAnswer').classList.add('hidden');return}
+  reviewIndex%=queue.length;const item=queue[reviewIndex];
+  $('reviewWord').textContent=item.word;$('reviewCount').textContent=(reviewIndex+1)+' / '+queue.length;
   $('reviewAnswer').textContent=[item.translation,item.definition,item.note?'笔记：'+item.note:''].filter(Boolean).join('\n')||'暂无释义，可点上方单词补充笔记。';
   $('reviewAnswer').classList.add('hidden');
 }
 function pronounceReviewWord(){
-  if(!wordbook.length)return;
+  const queue=reviewQueue();if(!queue.length)return;
   const status=$('reviewSpeechStatus');
   if(!('speechSynthesis'in window)||!('SpeechSynthesisUtterance'in window)){
     status.textContent='当前浏览器不支持英文发音。';return;
   }
-  const word=wordbook[reviewIndex%wordbook.length].word;
+  const word=queue[reviewIndex%queue.length].word;
   activeUtterance=null;window.speechSynthesis.cancel();
   const utterance=new window.SpeechSynthesisUtterance(word);activeUtterance=utterance;
   utterance.lang='en-US';utterance.rate=.85;utterance.volume=1;
@@ -175,7 +180,16 @@ $('saveWord').onclick=()=>saveCurrentWord(false);
 $('saveNote').onclick=()=>saveCurrentWord(true);
 $('revealWord').onclick=()=>$('reviewAnswer').classList.remove('hidden');
 $('hearReviewWord').onclick=pronounceReviewWord;
-$('nextWord').onclick=()=>{if(wordbook.length){activeUtterance=null;window.speechSynthesis?.cancel();reviewIndex++;renderReview()}};
+$('reviewAll').onclick=()=>{reviewAll=!reviewAll;reviewIndex=0;renderReview()};
+function rateCurrentWord(remembered){
+  const queue=reviewQueue();if(!queue.length)return;
+  wordbook=rateReview(wordbook,queue[reviewIndex%queue.length].word,remembered);
+  if(storage)writeWordbook(storage,wordbook);
+  reviewIndex=reviewAll&&remembered?reviewIndex+1:reviewAll?reviewIndex:0;renderWordbook();
+}
+$('rememberWord').onclick=()=>rateCurrentWord(true);
+$('againWord').onclick=()=>rateCurrentWord(false);
+$('nextWord').onclick=()=>{if(reviewQueue().length){activeUtterance=null;window.speechSynthesis?.cancel();reviewIndex++;renderReview()}};
 document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('wordSheet').classList.contains('hidden'))$('closeWord').click()});
 document.querySelectorAll('.mode').forEach(button=>button.onclick=()=>{
   document.querySelectorAll('.mode').forEach(b=>{const active=b===button;b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active))});

@@ -23,3 +23,17 @@ test('saves one copy of each word with the latest note',()=>{
   assert.equal(vocab.writeWordbook(storage,items),true);
   assert.equal(vocab.readWordbook(storage)[0].note,'每天练习');
 });
+
+test('review choices schedule familiar words and keep difficult words in the queue',()=>{
+  const now=Date.parse('2026-11-12T00:00:00Z');
+  let items=vocab.upsertWord([],{word:'hello',note:'问候'});
+  items=vocab.rateReview(items,'hello',true,now);
+  assert.equal(items[0].reviewStreak,1);
+  assert.equal(vocab.dueWords(items,now).length,0);
+  assert.equal(vocab.dueWords(items,now+86400000).length,1);
+  items=vocab.upsertWord(items,{word:'hello',note:'新的笔记'});
+  assert.equal(items[0].reviewStreak,1);
+  items=vocab.rateReview(items,'hello',false,now+86400000);
+  assert.equal(items[0].reviewStreak,0);
+  assert.equal(vocab.dueWords(items,now+86400000).length,1);
+});

@@ -49,4 +49,9 @@ test('sample subtitles support speech and tapped words can be saved with notes',
   assert.equal(spoken?.text,'hello');
   assert.equal(spoken?.lang,'en-US');
   assert.match(get('reviewSpeechStatus').textContent,/正在启动英文发音/);
+  get('rememberWord').onclick();
+  assert.equal(get('dueCount').textContent,'0 个单词待复习');
+  assert.match(get('reviewWord').textContent,/本轮复习完成/);
+  get('reviewAll').onclick();
+  assert.equal(get('reviewWord').textContent,'hello');
 });
