@@ -111,11 +111,33 @@ async function openWord(value,cue){
   $('wordStatus').textContent=dictionary||translation||seed?'词义仅供参考；可以收藏或写下自己的理解。':'在线词典暂不可用；仍可根据整句译文写笔记并保存。';
 }
 function renderReview(){
+  $('hearReviewWord').disabled=!wordbook.length;
+  $('reviewSpeechStatus').textContent='';
   if(!wordbook.length){$('reviewWord').textContent='收藏单词后可复习。';$('reviewCount').textContent='0 / 0';$('reviewAnswer').classList.add('hidden');return}
   reviewIndex%=wordbook.length;const item=wordbook[reviewIndex];
   $('reviewWord').textContent=item.word;$('reviewCount').textContent=(reviewIndex+1)+' / '+wordbook.length;
   $('reviewAnswer').textContent=[item.translation,item.definition,item.note?'笔记：'+item.note:''].filter(Boolean).join('\n')||'暂无释义，可点上方单词补充笔记。';
   $('reviewAnswer').classList.add('hidden');
+}
+function pronounceReviewWord(){
+  if(!wordbook.length)return;
+  const status=$('reviewSpeechStatus');
+  if(!('speechSynthesis'in window)||!('SpeechSynthesisUtterance'in window)){
+    status.textContent='当前浏览器不支持英文发音。';return;
+  }
+  const word=wordbook[reviewIndex%wordbook.length].word;
+  activeUtterance=null;window.speechSynthesis.cancel();
+  const utterance=new window.SpeechSynthesisUtterance(word);activeUtterance=utterance;
+  utterance.lang='en-US';utterance.rate=.85;utterance.volume=1;
+  const voices=window.speechSynthesis.getVoices();
+  const voice=voices.find(v=>v.lang.toLowerCase()==='en-us')||voices.find(v=>v.lang.toLowerCase().startsWith('en'));
+  if(voice)utterance.voice=voice;
+  let started=false;
+  utterance.onstart=()=>{started=true;status.textContent='正在朗读：'+word};
+  utterance.onend=()=>{if(activeUtterance===utterance){activeUtterance=null;status.textContent='朗读结束。'}};
+  utterance.onerror=e=>{if(activeUtterance===utterance){activeUtterance=null;status.textContent='发音失败：'+(e.error||'未知错误')+'。请检查媒体音量。'}};
+  status.textContent='正在启动英文发音…';window.speechSynthesis.speak(utterance);
+  setTimeout(()=>{if(activeUtterance===utterance&&!started){activeUtterance=null;window.speechSynthesis.cancel();status.textContent='发音未能启动。请用 Safari 打开、调高媒体音量后再点一次。'}},5000);
 }
 function renderWordbook(){
   $('wordCount').textContent=wordbook.length;const list=$('wordList');list.replaceChildren();
@@ -152,7 +174,8 @@ $('wordSheet').onclick=event=>{if(event.target===$('wordSheet'))$('closeWord').c
 $('saveWord').onclick=()=>saveCurrentWord(false);
 $('saveNote').onclick=()=>saveCurrentWord(true);
 $('revealWord').onclick=()=>$('reviewAnswer').classList.remove('hidden');
-$('nextWord').onclick=()=>{if(wordbook.length){reviewIndex++;renderReview()}};
+$('hearReviewWord').onclick=pronounceReviewWord;
+$('nextWord').onclick=()=>{if(wordbook.length){activeUtterance=null;window.speechSynthesis?.cancel();reviewIndex++;renderReview()}};
 document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('wordSheet').classList.contains('hidden'))$('closeWord').click()});
 document.querySelectorAll('.mode').forEach(button=>button.onclick=()=>{
   document.querySelectorAll('.mode').forEach(b=>{const active=b===button;b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active))});
