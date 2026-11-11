@@ -30,14 +30,21 @@ function loadCues(text,source){
   $('sourceStatus').textContent=cues.length?source+'：已载入 '+cues.length+' 句字幕。':'未找到有效字幕，请检查时间轴和英文内容。';
   renderLines();if(cues.length)select(0,false);else{$('current').textContent='请先载入字幕。';renderPractice()}
 }
-function playCurrent(){if(idx<0&&cues.length)select(0);if(!currentCue()){setFeedback('ttsStatus','请先载入字幕。');return}if(!videoURL){setFeedback('ttsStatus','请先选择视频；也可以点“英文朗读”。');return}const video=$('player');video.currentTime=currentCue().start;video.play().catch(()=>setFeedback('ttsStatus','视频无法播放，请检查文件格式。'))}
+function setPlayStatus(message){$('playStatus').textContent=message;$('ttsStatus').textContent=message}
+function playCurrent(){
+  if(idx<0&&cues.length)select(0);
+  if(!currentCue()){setPlayStatus('请先载入字幕。');return}
+  if(!videoURL){speak();return}
+  const video=$('player');video.currentTime=currentCue().start;
+  video.play().then(()=>setPlayStatus('正在播放视频原句。')).catch(()=>setPlayStatus('视频无法播放，请检查文件格式。'));
+}
 function speak(){
-  const cue=currentCue();if(!cue){$('ttsStatus').textContent='请先载入英文字幕。';return}
-  if(!('speechSynthesis'in window)||!('SpeechSynthesisUtterance'in window)){$('ttsStatus').textContent='当前浏览器不支持英文朗读。';return}
-  speechSynthesis.cancel();const utterance=new SpeechSynthesisUtterance(cue.en);utterance.lang='en-US';utterance.rate=.88;
-  const voices=speechSynthesis.getVoices();utterance.voice=voices.find(v=>v.lang.toLowerCase()==='en-us')||voices.find(v=>v.lang.toLowerCase().startsWith('en'))||null;
-  utterance.onerror=()=>{$('ttsStatus').textContent='朗读失败，请检查设备语音设置。'};
-  $('ttsStatus').textContent='正在使用设备英文语音朗读。';speechSynthesis.speak(utterance);
+  const cue=currentCue();if(!cue){setPlayStatus('请先载入英文字幕。');return}
+  if(!('speechSynthesis'in window)||!('SpeechSynthesisUtterance'in window)){setPlayStatus('当前浏览器不支持英文朗读。');return}
+  window.speechSynthesis.cancel();const utterance=new window.SpeechSynthesisUtterance(cue.en);utterance.lang='en-US';utterance.rate=.88;
+  const voices=window.speechSynthesis.getVoices();utterance.voice=voices.find(v=>v.lang.toLowerCase()==='en-us')||voices.find(v=>v.lang.toLowerCase().startsWith('en'))||null;
+  utterance.onerror=()=>setPlayStatus('朗读失败，请检查设备语音设置。');
+  setPlayStatus('正在使用设备英文语音朗读。');window.speechSynthesis.speak(utterance);
 }
 function feedbackText(expected,actual){
   const result=compareText(expected,actual);
