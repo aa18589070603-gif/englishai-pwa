@@ -30,8 +30,8 @@ test('generates cloze and quiz only from available subtitle text',()=>{
 test('page contains every element referenced by the application',()=>{
   const root=path.join(__dirname,'..');
   const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
-  const app=fs.readFileSync(path.join(root,'app.js'),'utf8');
+  const app=fs.readFileSync(path.join(root,'app.js'),'utf8')+fs.readFileSync(path.join(root,'dialogue.js'),'utf8');
   const ids=[...app.matchAll(/\$\('([^']+)'\)/g)].map(match=>match[1]);
   for(const id of new Set(ids))assert.ok(html.includes('id="'+id+'"'),'missing #'+id);
-  for(const asset of ['core.js','vocab.js','app.js','styles.css'])assert.ok(html.includes(asset));
+  for(const asset of ['core.js','vocab.js','app.js','dialogue.js','styles.css'])assert.ok(html.includes(asset));
 });
