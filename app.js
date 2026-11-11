@@ -1,6 +1,6 @@
 const $=id=>document.getElementById(id);
 const {parseSubtitles,compareText,clozeFor,quizFor}=EnglishAICore;
-let cues=[],idx=-1,videoURL=null,recURL=null,stream=null,recorder=null,chunks=[],recognition=null,clozeOffset=0,quizIndex=0,quizAnswered=false;
+let cues=[],idx=-1,videoURL=null,recURL=null,stream=null,recorder=null,chunks=[],recognition=null,clozeOffset=0,quizIndex=0,quizAnswered=false,activeUtterance=null;
 const sample='1\n00:00:01,000 --> 00:00:04,000\nHello, how are you?\n你好，你好吗？\n\n2\n00:00:04,000 --> 00:00:07,000\nI am learning English every day.\n我每天都在学习英语。\n\n3\n00:00:07,000 --> 00:00:10,000\nPractice makes progress.\n练习带来进步。\n\n4\n00:00:10,000 --> 00:00:13,000\nLet us try one more time.\n我们再试一次。';
 
 function setFeedback(id,message,kind=''){
@@ -41,10 +41,15 @@ function playCurrent(){
 function speak(){
   const cue=currentCue();if(!cue){setPlayStatus('请先载入英文字幕。');return}
   if(!('speechSynthesis'in window)||!('SpeechSynthesisUtterance'in window)){setPlayStatus('当前浏览器不支持英文朗读。');return}
-  window.speechSynthesis.cancel();const utterance=new window.SpeechSynthesisUtterance(cue.en);utterance.lang='en-US';utterance.rate=.88;
-  const voices=window.speechSynthesis.getVoices();utterance.voice=voices.find(v=>v.lang.toLowerCase()==='en-us')||voices.find(v=>v.lang.toLowerCase().startsWith('en'))||null;
-  utterance.onerror=()=>setPlayStatus('朗读失败，请检查设备语音设置。');
-  setPlayStatus('正在使用设备英文语音朗读。');window.speechSynthesis.speak(utterance);
+  const utterance=new window.SpeechSynthesisUtterance(cue.en);activeUtterance=utterance;utterance.lang='en-US';utterance.rate=1;utterance.volume=1;
+  const voices=window.speechSynthesis.getVoices();const voice=voices.find(v=>v.lang.toLowerCase()==='en-us')||voices.find(v=>v.lang.toLowerCase().startsWith('en'));
+  if(voice)utterance.voice=voice;
+  let started=false;
+  utterance.onstart=()=>{started=true;setPlayStatus('设备正在朗读英文。请调高媒体音量。')};
+  utterance.onend=()=>{if(activeUtterance===utterance){activeUtterance=null;setPlayStatus('朗读结束。')}};
+  utterance.onerror=e=>{if(activeUtterance===utterance){activeUtterance=null;setPlayStatus('朗读失败：'+(e.error||'未知错误')+'。请用 Safari 打开并检查设备语音设置。')}};
+  setPlayStatus('正在启动设备英文语音…');window.speechSynthesis.speak(utterance);
+  setTimeout(()=>{if(activeUtterance===utterance&&!started){activeUtterance=null;window.speechSynthesis.cancel();setPlayStatus('语音未能启动。请用 Safari 打开、调高媒体音量，再点一次“播放本句”。')}},5000);
 }
 function feedbackText(expected,actual){
   const result=compareText(expected,actual);
