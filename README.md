@@ -23,7 +23,7 @@
 
 页面提供四个学习阶段：零基础、初级、中级、高级。每阶段有练习目标和本机完成勾选；阶段记录是自评，不是等级考试。另有日常对话和职场话题的官方课程入口。VOA Learning English 的 [Level 1](https://learningenglish.voanews.com/p/5644.html) 与 [Level 2](https://learningenglish.voanews.com/p/6765.html) 提供连续课程；British Council 的课程请在其原网站学习，本站只提供链接，不打包其内容。
 
-离线入门资料包在本项目工作区的 `outputs/EnglishAI-offline-starter-20261112`，含三段 VOA 原版 MP4、对应官方教学 PDF 和中文使用说明。它是前三个阶段的起步示例，不是整套课程，也没有与视频逐句对齐的 SRT/VTT；教学 PDF 中有英文对话稿。导入后可先用普通视频播放、录音跟读；逐句循环、听写、填空与 Quiz 需自行导入对应的带时间轴字幕。[VOA 的内容使用说明](https://learningenglish.voanews.com/p/6861.html)允许在注明来源的前提下使用其原版学习资料；第三方新闻社素材不在此范围。
+离线入门资料包在本项目工作区的 `outputs/EnglishAI-offline-starter-20261112`，含三段 VOA 原版 MP4、对应官方教学 PDF、一段 MDN GitHub 仓库中的 Sintel 短片 MP4、与短片准确对齐的英中双语 SRT、28 词 EnglishAI 单词本导入文件和中文使用说明。Sintel 视频与双语字幕可立即用于逐句循环、听写、填空和 Quiz。前三段 VOA 视频的教学 PDF 有英文对话稿，但没有与视频逐句对齐的 SRT/VTT；要在这三段视频上用逐句功能，还需制作对应时间轴字幕。资料包是起步示例，不是整套课程。[VOA 的内容使用说明](https://learningenglish.voanews.com/p/6861.html)允许在注明来源的前提下使用其原版学习资料；第三方新闻社素材不在此范围。[Sintel](https://durian.blender.org/sharing/) 由 Blender Foundation 以 CC BY 3.0 发布。
 
 ## 本地检查
 
