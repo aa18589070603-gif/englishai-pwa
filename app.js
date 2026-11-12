@@ -2,7 +2,6 @@ const $=id=>document.getElementById(id);
 const {parseSubtitles,compareText,clozeFor,quizFor}=EnglishAICore;
 const {normalizeWord,localDefinition,parseDictionary,parseTranslation,readWordbook,writeWordbook,upsertWord,dueWords,rateReview,makeBackup,parseBackup,mergeWordbooks}=EnglishAIVocab;
 const mediaStore=typeof EnglishAIMedia==='undefined'?null:EnglishAIMedia;
-const cloud=typeof EnglishAICloud==='undefined'?null:EnglishAICloud;
 let cues=[],idx=-1,videoURL=null,recURL=null,stream=null,recorder=null,chunks=[],recognition=null,clozeOffset=0,quizIndex=0,quizAnswered=false,activeUtterance=null;
 let mediaRevision=0;
 let storage=null;try{storage=window.localStorage}catch{}
@@ -238,7 +237,7 @@ async function renderSavedVideos(){
       const open=document.createElement('button');open.type='button';open.className='ghost';open.textContent='打开';
       open.onclick=async()=>{try{mediaRevision++;const selected=await mediaStore.activateVideo(video.id),subtitles=await mediaStore.getSubtitlesFor(selected);showVideo(selected);loadCues(subtitles?.text||'',subtitles?.name||'未保存字幕');$('localSaveStatus').textContent='已打开保存的视频：'+selected.name+(subtitles?.text?'，并载入对应字幕。':'。请为它导入字幕。')}catch(error){$('localSaveStatus').textContent='无法打开视频：'+error.message}};
       const remove=document.createElement('button');remove.type='button';remove.className='remove-media';remove.textContent='删除';remove.setAttribute('aria-label','删除保存的视频 '+video.name);
-      remove.onclick=async()=>{if(!window.confirm('确定删除“'+video.name+'”吗？登录云端时也会从云端删除。'))return;try{if(cloud?.loggedIn())await cloud.deleteRemote(video.id);await mediaStore.deleteVideo(video.id);await renderSavedVideos();$('localSaveStatus').textContent='已删除保存的视频：'+video.name+'。当前播放不会立即中断。'}catch(error){$('localSaveStatus').textContent='删除失败：'+error.message}};
+      remove.onclick=async()=>{if(!window.confirm('确定从本机删除“'+video.name+'”吗？'))return;try{await mediaStore.deleteVideo(video.id);await renderSavedVideos();$('localSaveStatus').textContent='已删除本机保存的视频：'+video.name+'。当前播放不会立即中断。'}catch(error){$('localSaveStatus').textContent='删除失败：'+error.message}};
       row.append(name,open,remove);list.append(row);
     }
   }catch(error){list.textContent='无法读取已保存的视频：'+error.message}
@@ -256,42 +255,6 @@ async function restoreMedia(){
     await renderSavedVideos();
   }catch(error){$('localSaveStatus').textContent='无法恢复本机素材：'+error.message}
 }
-let cloudSyncing=false,cloudSyncAgain=false;
-function showCloudAccount(){
-  if(!cloud)return;
-  const config=cloud.getConfig();
-  $('cloudUrl').value=config?.url||'';$('cloudKey').value=config?.key||'';
-  $('cloudStatus').textContent=cloud.loggedIn()?'已登录：'+cloud.email()+'。打开页面时会自动同步。':cloud.configured()?'云端项目已设置。请在电脑和手机用同一邮箱登录。':'尚未连接云端。只有本机保存生效。';
-  $('cloudLogout').classList.toggle('hidden',!cloud.loggedIn());
-}
-async function queueCloudSync(){
-  if(!cloud?.loggedIn()||!mediaStore)return;
-  if(cloudSyncing){cloudSyncAgain=true;return}
-  cloudSyncing=true;$('syncNow').disabled=true;
-  try{
-    do{
-      cloudSyncAgain=false;
-      $('cloudStatus').textContent='正在检查电脑和手机的素材…';
-      const hadVideo=!!(await mediaStore.getActiveVideo());
-      const result=await cloud.sync(mediaStore,message=>{$('cloudStatus').textContent=message});
-      await renderSavedVideos();
-      if(result.downloaded&&!hadVideo){
-        const first=(await mediaStore.listVideos())[0];
-        if(first){await mediaStore.activateVideo(first.id);showVideo(first);loadCues(first.subtitleText||'',first.subtitleName||'云端字幕')}
-      }
-      else if(result.updated){const active=await mediaStore.getActiveVideo();if(active?.subtitleText)loadCues(active.subtitleText,active.subtitleName||'已同步字幕')}
-      $('cloudStatus').textContent='同步完成：上传 '+result.uploaded+' 个，下载 '+result.downloaded+' 个，更新字幕 '+result.updated+' 个。'+(result.skipped?'有 '+result.skipped+' 个超过 50 MB，未上传。':'');
-    }while(cloudSyncAgain);
-  }catch(error){$('cloudStatus').textContent='同步失败：'+error.message+'。本机素材仍可使用。'}
-  finally{cloudSyncing=false;$('syncNow').disabled=false}
-}
-$('saveCloudConfig').onclick=()=>{try{cloud.configure($('cloudUrl').value,$('cloudKey').value);showCloudAccount();$('cloudStatus').textContent='云端项目已保存。现在注册或登录。'}catch(error){$('cloudStatus').textContent=error.message}};
-$('cloudSignup').onclick=async()=>{try{const ready=await cloud.signup($('cloudEmail').value.trim(),$('cloudPassword').value);$('cloudPassword').value='';showCloudAccount();$('cloudStatus').textContent=ready?'注册成功，正在同步…':'注册请求已发送，请查收验证邮件，验证后再登录。';if(ready)queueCloudSync()}catch(error){$('cloudStatus').textContent='注册失败：'+error.message}};
-$('cloudLogin').onclick=async()=>{try{await cloud.login($('cloudEmail').value.trim(),$('cloudPassword').value);$('cloudPassword').value='';showCloudAccount();queueCloudSync()}catch(error){$('cloudStatus').textContent='登录失败：'+error.message}};
-$('cloudLogout').onclick=()=>{cloud.logout();showCloudAccount();$('cloudStatus').textContent='已退出云端账号。本机素材仍保留。'};
-$('syncNow').onclick=queueCloudSync;
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)queueCloudSync()});
-showCloudAccount();
 $('videoFile').onchange=async e=>{
   const file=e.target.files[0];if(!file)return;mediaRevision++;
   showVideo({blob:file});loadCues('','新视频待导入字幕');
@@ -299,17 +262,17 @@ $('videoFile').onchange=async e=>{
   if(!mediaStore){$('localSaveStatus').textContent='本次可播放；当前浏览器不支持本机保存。';return}
   $('localSaveStatus').textContent='正在将视频保存到本机…';
   pendingVideoSave=mediaStore.saveVideo(file);
-  try{await pendingVideoSave;await renderSavedVideos();$('localSaveStatus').textContent='视频已加入本机素材库。请保留原始文件，以防浏览器清理数据。';queueCloudSync()}
+  try{await pendingVideoSave;await renderSavedVideos();$('localSaveStatus').textContent='视频已加入本机素材库。请保留原始文件，以防浏览器清理数据。'}
   catch(error){$('localSaveStatus').textContent='视频可在本次使用，但未能保存：'+(error.name==='QuotaExceededError'?'手机存储空间不足；以前保存的视频仍可恢复。':error.message)}
 };
 $('subtitleFile').onchange=async e=>{
   const file=e.target.files[0];if(!file)return;mediaRevision++;
   const text=await file.text();loadCues(text,file.name);
-  if(mediaStore)try{await pendingVideoSave;await mediaStore.saveSubtitles(text,file.name);await renderSavedVideos();$('localSaveStatus').textContent='字幕已保存到当前视频。';queueCloudSync()}catch(error){$('localSaveStatus').textContent='字幕已载入，但未能保存：'+error.message}
+  if(mediaStore)try{await pendingVideoSave;await mediaStore.saveSubtitles(text,file.name);await renderSavedVideos();$('localSaveStatus').textContent='字幕已保存到当前视频。'}catch(error){$('localSaveStatus').textContent='字幕已载入，但未能保存：'+error.message}
 };
 $('sample').onclick=()=>{mediaRevision++;loadCues(sample,'示例字幕')};
-$('clear').onclick=async()=>{mediaRevision++;loadCues('','已清空');if(mediaStore)try{await pendingVideoSave;await mediaStore.clearSubtitles();await renderSavedVideos();$('localSaveStatus').textContent='已清除当前视频保存的字幕。';queueCloudSync()}catch(error){$('localSaveStatus').textContent='未能清除本机字幕：'+error.message}};
-$('parsePaste').onclick=async()=>{mediaRevision++;const text=$('paste').value;loadCues(text,'粘贴字幕');if(mediaStore)try{await pendingVideoSave;await mediaStore.saveSubtitles(text,'粘贴字幕');await renderSavedVideos();$('localSaveStatus').textContent='字幕已保存到当前视频。';queueCloudSync()}catch(error){$('localSaveStatus').textContent='字幕已载入，但未能保存：'+error.message}};
+$('clear').onclick=async()=>{mediaRevision++;loadCues('','已清空');if(mediaStore)try{await pendingVideoSave;await mediaStore.clearSubtitles();await renderSavedVideos();$('localSaveStatus').textContent='已清除当前视频保存的字幕。'}catch(error){$('localSaveStatus').textContent='未能清除本机字幕：'+error.message}};
+$('parsePaste').onclick=async()=>{mediaRevision++;const text=$('paste').value;loadCues(text,'粘贴字幕');if(mediaStore)try{await pendingVideoSave;await mediaStore.saveSubtitles(text,'粘贴字幕');await renderSavedVideos();$('localSaveStatus').textContent='字幕已保存到当前视频。'}catch(error){$('localSaveStatus').textContent='字幕已载入，但未能保存：'+error.message}};
 $('forgetMedia').onclick=async()=>{
   if(!mediaStore)return;
   if(!window.confirm('确定删除本机保存的全部视频和字幕吗？'))return;
@@ -353,5 +316,5 @@ $('recognize').onclick=()=>{
   }catch(error){$('recognize').disabled=false;setFeedback('speechFeedback','无法开始识别：'+error.message,'needs-work')}
 };
 renderLines();renderPractice();renderWordbook();
-restoreMedia().then(queueCloudSync);
+restoreMedia();
 if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
