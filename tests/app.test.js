@@ -10,18 +10,20 @@ test('sample subtitles support speech and tapped words can be saved with notes',
   const elements=new Map();
   function element(){
     const classes=new Set();
-    return{textContent:'',value:'',src:'',children:[],classList:{add:x=>classes.add(x),remove:x=>classes.delete(x),toggle:x=>classes.has(x)?classes.delete(x):classes.add(x),contains:x=>classes.has(x)},replaceChildren(){this.children=[]},append(...nodes){this.children.push(...nodes)},setAttribute(){},addEventListener(){},focus(){},play(){throw Error('video should not play')},querySelectorAll(){return[]}};
+    return{textContent:'',value:'',src:'',children:[],classList:{add:x=>classes.add(x),remove:x=>classes.delete(x),toggle:x=>classes.has(x)?classes.delete(x):classes.add(x),contains:x=>classes.has(x)},replaceChildren(){this.children=[]},append(...nodes){this.children.push(...nodes)},setAttribute(){},addEventListener(){},focus(){},play(){return Promise.resolve()},querySelectorAll(){return[]}};
   }
   const get=id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)};
   let spoken=null;
   class Utterance{constructor(text){this.text=text}}
   const synth={getVoices:()=>[],speak:utterance=>{spoken=utterance},cancel(){}};
   const data=new Map(),storage={getItem:key=>data.get(key)||null,setItem:(key,value)=>data.set(key,value)};
-  const mediaData=new Map();let activeVideo=null;
+  const mediaData=new Map(),positions=new Map();let activeVideo=null;
   const mediaStore={
     listVideos:async()=>[...mediaData.values()].filter(item=>item.id?.startsWith('video:')),
     getActiveVideo:async()=>activeVideo&&mediaData.get(activeVideo)||null,
     getSubtitlesFor:async video=>video?.subtitleText?{text:video.subtitleText,name:video.subtitleName}:null,
+    getPosition:async id=>positions.get(id)||0,
+    savePosition:async(id,index)=>{positions.set(id,index)},
     saveVideo:async file=>{const item={id:'video:1',blob:file,name:file.name,size:file.size,subtitleText:''};mediaData.set(item.id,item);activeVideo=item.id;return item},
     saveSubtitles:async(text,name)=>{const item=mediaData.get(activeVideo);item.subtitleText=text;item.subtitleName=name},
     activateVideo:async id=>{activeVideo=id;return mediaData.get(id)},
@@ -71,11 +73,21 @@ test('sample subtitles support speech and tapped words can be saved with notes',
   assert.match(get('backupStatus').textContent,/已导入 1 个新单词/);
   await get('videoFile').onchange({target:{files:[{name:'clip.mp4',size:42,type:'video/mp4'}]}});
   assert.equal(mediaData.get('video:1').name,'clip.mp4');
-  const srt='1\n00:00:01,000 --> 00:00:02,000\nHello!\n你好';
+  const srt='1\n00:00:01,000 --> 00:00:02,000\nHello!\n你好\n\n2\n00:00:03,000 --> 00:00:04,000\nPractice!\n练习！';
   await get('subtitleFile').onchange({target:{files:[{name:'captions.srt',text:async()=>srt}]}});
   assert.equal(mediaData.get('video:1').subtitleText,srt);
   assert.equal(get('savedVideoCount').textContent,1);
   await get('savedVideoList').children[0].children[1].onclick();
   assert.match(get('localSaveStatus').textContent,/已打开保存的视频/);
-  assert.equal(get('cueCount').textContent,'1 句');
+  assert.equal(get('cueCount').textContent,'2 句');
+  get('next').onclick();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(positions.get('video:1'),1);
+  await get('savedVideoList').children[0].children[1].onclick();
+  assert.equal(get('current').children[0].textContent,'Practice');
+  get('sample').onclick();
+  get('next').onclick();
+  get('next').onclick();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(positions.get('video:1'),1);
 });

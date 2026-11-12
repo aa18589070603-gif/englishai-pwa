@@ -2,7 +2,7 @@ const $=id=>document.getElementById(id);
 const {parseSubtitles,compareText,clozeFor,quizFor}=EnglishAICore;
 const {normalizeWord,localDefinition,parseDictionary,parseTranslation,readWordbook,writeWordbook,upsertWord,dueWords,rateReview,makeBackup,parseBackup,mergeWordbooks}=EnglishAIVocab;
 const mediaStore=typeof EnglishAIMedia==='undefined'?null:EnglishAIMedia;
-let cues=[],idx=-1,videoURL=null,recURL=null,stream=null,recorder=null,chunks=[],recognition=null,clozeOffset=0,quizIndex=0,quizAnswered=false,activeUtterance=null;
+let cues=[],idx=-1,videoURL=null,activeVideoId=null,trackProgress=true,positionSave=Promise.resolve(),recURL=null,stream=null,recorder=null,chunks=[],recognition=null,clozeOffset=0,quizIndex=0,quizAnswered=false,activeUtterance=null;
 let mediaRevision=0;
 let storage=null;try{storage=window.localStorage}catch{}
 let wordbook=storage?readWordbook(storage):[],currentWord=null,wordRequest=0,reviewIndex=0,reviewAll=false;
@@ -33,17 +33,18 @@ function renderPractice(){
   const cloze=cue&&clozeFor(cue,clozeOffset);$('clozePrompt').textContent=cloze?.prompt||'请先载入英文字幕。';
   renderQuiz();
 }
-function select(i,play=false){
+function select(i,play=false,remember=true){
   if(i<0||i>=cues.length)return;
   idx=i;clozeOffset=0;const cue=cues[i],current=$('current');current.replaceChildren();renderWords(current,cue.en,cue);
   if(cue.zh){const zh=document.createElement('div');zh.className='zh';zh.textContent=cue.zh;current.append(zh)}
   renderLines();renderPractice();
   if(videoURL){$('player').currentTime=cue.start;if(play)$('player').play().catch(()=>{})}
+  if(remember&&trackProgress&&mediaStore&&activeVideoId){const id=activeVideoId;positionSave=positionSave.catch(()=>{}).then(()=>mediaStore.savePosition(id,i))}
 }
-function loadCues(text,source){
-  cues=parseSubtitles(text);idx=-1;quizIndex=0;
+function loadCues(text,source,startIndex=0,track=true){
+  cues=parseSubtitles(text);idx=-1;quizIndex=0;trackProgress=track;
   $('sourceStatus').textContent=cues.length?source+'：已载入 '+cues.length+' 句字幕。':'未找到有效字幕，请检查时间轴和英文内容。';
-  renderLines();if(cues.length)select(0,false);else{$('current').textContent='请先载入字幕。';renderPractice()}
+  renderLines();if(cues.length)select(Math.min(Math.max(0,startIndex),cues.length-1),false,false);else{$('current').textContent='请先载入字幕。';renderPractice()}
 }
 function setPlayStatus(message){$('playStatus').textContent=message;$('ttsStatus').textContent=message}
 function playCurrent(){
@@ -222,6 +223,7 @@ document.querySelectorAll('.mode').forEach(button=>button.onclick=()=>{
 let pendingVideoSave=Promise.resolve();
 function showVideo(video){
   if(videoURL)URL.revokeObjectURL(videoURL);
+  activeVideoId=video.id||null;
   videoURL=URL.createObjectURL(video.blob);$('player').src=videoURL;
 }
 async function renderSavedVideos(){
@@ -233,9 +235,9 @@ async function renderSavedVideos(){
     for(const video of videos){
       const row=document.createElement('div');row.className='saved-media-row';
       const name=document.createElement('span');name.className='media-name';name.textContent=video.name;
-      const detail=document.createElement('small');detail.textContent=(video.size/1048576).toFixed(1)+' MB'+(video.subtitleText?' · 有字幕':'');name.append(detail);
+      const detail=document.createElement('small');const position=await mediaStore.getPosition(video.id);detail.textContent=(video.size/1048576).toFixed(1)+' MB'+(video.subtitleText?' · 有字幕':'')+(position?' · 上次第 '+(position+1)+' 句':'');name.append(detail);
       const open=document.createElement('button');open.type='button';open.className='ghost';open.textContent='打开';
-      open.onclick=async()=>{try{mediaRevision++;const selected=await mediaStore.activateVideo(video.id),subtitles=await mediaStore.getSubtitlesFor(selected);showVideo(selected);loadCues(subtitles?.text||'',subtitles?.name||'未保存字幕');$('localSaveStatus').textContent='已打开保存的视频：'+selected.name+(subtitles?.text?'，并载入对应字幕。':'。请为它导入字幕。')}catch(error){$('localSaveStatus').textContent='无法打开视频：'+error.message}};
+      open.onclick=async()=>{try{mediaRevision++;const selected=await mediaStore.activateVideo(video.id),subtitles=await mediaStore.getSubtitlesFor(selected),position=await mediaStore.getPosition(selected.id);showVideo(selected);loadCues(subtitles?.text||'',subtitles?.name||'未保存字幕',position);$('localSaveStatus').textContent='已打开保存的视频：'+selected.name+(subtitles?.text?'，并回到上次练习的句子。':'。请为它导入字幕。')}catch(error){$('localSaveStatus').textContent='无法打开视频：'+error.message}};
       const remove=document.createElement('button');remove.type='button';remove.className='remove-media';remove.textContent='删除';remove.setAttribute('aria-label','删除保存的视频 '+video.name);
       remove.onclick=async()=>{if(!window.confirm('确定从本机删除“'+video.name+'”吗？'))return;try{await mediaStore.deleteVideo(video.id);await renderSavedVideos();$('localSaveStatus').textContent='已删除本机保存的视频：'+video.name+'。当前播放不会立即中断。'}catch(error){$('localSaveStatus').textContent='删除失败：'+error.message}};
       row.append(name,open,remove);list.append(row);
@@ -246,11 +248,11 @@ async function restoreMedia(){
   if(!mediaStore){$('localSaveStatus').textContent='当前浏览器不支持本机素材保存；本次仍可正常练习。';return}
   const revision=mediaRevision;
   try{
-    const video=await mediaStore.getActiveVideo(),subtitles=await mediaStore.getSubtitlesFor(video);
+    const video=await mediaStore.getActiveVideo(),subtitles=await mediaStore.getSubtitlesFor(video),position=await mediaStore.getPosition(video?.id);
     if(revision!==mediaRevision)return;
     const restored=[];
     if(video?.blob){showVideo(video);restored.push('视频 '+video.name)}
-    if(subtitles?.text){loadCues(subtitles.text,subtitles.name||'已保存字幕');restored.push('字幕')}
+    if(subtitles?.text){loadCues(subtitles.text,subtitles.name||'已保存字幕',position);restored.push('字幕'+(position?'（第 '+(idx+1)+' 句）':''))}
     $('localSaveStatus').textContent=restored.length?'已从本机恢复：'+restored.join('、')+'。':'尚无本机保存的视频或字幕。';
     await renderSavedVideos();
   }catch(error){$('localSaveStatus').textContent='无法恢复本机素材：'+error.message}
@@ -258,11 +260,12 @@ async function restoreMedia(){
 $('videoFile').onchange=async e=>{
   const file=e.target.files[0];if(!file)return;mediaRevision++;
   showVideo({blob:file});loadCues('','新视频待导入字幕');
+  const chosenURL=videoURL;
   $('sourceStatus').textContent='已选择视频：'+file.name+'。现在导入字幕即可逐句练习。';
   if(!mediaStore){$('localSaveStatus').textContent='本次可播放；当前浏览器不支持本机保存。';return}
   $('localSaveStatus').textContent='正在将视频保存到本机…';
   pendingVideoSave=mediaStore.saveVideo(file);
-  try{await pendingVideoSave;await renderSavedVideos();$('localSaveStatus').textContent='视频已加入本机素材库。请保留原始文件，以防浏览器清理数据。'}
+  try{const saved=await pendingVideoSave;if(videoURL===chosenURL)activeVideoId=saved.id;await renderSavedVideos();$('localSaveStatus').textContent='视频已加入本机素材库。请保留原始文件，以防浏览器清理数据。'}
   catch(error){$('localSaveStatus').textContent='视频可在本次使用，但未能保存：'+(error.name==='QuotaExceededError'?'手机存储空间不足；以前保存的视频仍可恢复。':error.message)}
 };
 $('subtitleFile').onchange=async e=>{
@@ -270,7 +273,7 @@ $('subtitleFile').onchange=async e=>{
   const text=await file.text();loadCues(text,file.name);
   if(mediaStore)try{await pendingVideoSave;await mediaStore.saveSubtitles(text,file.name);await renderSavedVideos();$('localSaveStatus').textContent='字幕已保存到当前视频。'}catch(error){$('localSaveStatus').textContent='字幕已载入，但未能保存：'+error.message}
 };
-$('sample').onclick=()=>{mediaRevision++;loadCues(sample,'示例字幕')};
+$('sample').onclick=()=>{mediaRevision++;loadCues(sample,'示例字幕',0,false)};
 $('clear').onclick=async()=>{mediaRevision++;loadCues('','已清空');if(mediaStore)try{await pendingVideoSave;await mediaStore.clearSubtitles();await renderSavedVideos();$('localSaveStatus').textContent='已清除当前视频保存的字幕。'}catch(error){$('localSaveStatus').textContent='未能清除本机字幕：'+error.message}};
 $('parsePaste').onclick=async()=>{mediaRevision++;const text=$('paste').value;loadCues(text,'粘贴字幕');if(mediaStore)try{await pendingVideoSave;await mediaStore.saveSubtitles(text,'粘贴字幕');await renderSavedVideos();$('localSaveStatus').textContent='字幕已保存到当前视频。'}catch(error){$('localSaveStatus').textContent='字幕已载入，但未能保存：'+error.message}};
 $('forgetMedia').onclick=async()=>{

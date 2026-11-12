@@ -24,6 +24,16 @@
   }
   const get=id=>run('readonly',store=>store.get(id));
   const remove=id=>run('readwrite',store=>store.delete(id));
+  const positionKey=id=>'position:'+id;
+  async function getPosition(id){
+    if(!id)return 0;
+    const item=await get(positionKey(id));
+    return Number.isSafeInteger(item?.index)&&item.index>=0?item.index:0;
+  }
+  async function savePosition(id,index){
+    if(!id||!Number.isSafeInteger(index)||index<0)throw Error('无效的学习位置。');
+    return run('readwrite',store=>store.put({id:positionKey(id),index}));
+  }
   async function listVideos(){
     const all=await run('readonly',store=>store.getAll());
     return all.filter(item=>item.id==='video'||item.id.startsWith('video:')).sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''));
@@ -59,9 +69,10 @@
   }
   async function deleteVideo(id){
     await remove(id);
+    await remove(positionKey(id));
     const active=await get('active-video');
     if(active?.videoId===id){const next=(await listVideos())[0];if(next)await activateVideo(next.id);else await remove('active-video')}
   }
   const clearMedia=()=>run('readwrite',store=>store.clear());
-  return{get,remove,listVideos,getActiveVideo,activateVideo,saveVideo,getSubtitlesFor,saveSubtitles,clearSubtitles,deleteVideo,clearMedia};
+  return{get,remove,listVideos,getActiveVideo,activateVideo,saveVideo,getPosition,savePosition,getSubtitlesFor,saveSubtitles,clearSubtitles,deleteVideo,clearMedia};
 });

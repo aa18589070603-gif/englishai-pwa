@@ -33,13 +33,19 @@ test('stores and restores the latest video and subtitles on the current device',
   const video={name:'clip.mp4',type:'video/mp4',size:42};
   const latest=await media.saveVideo(video);
   await media.saveSubtitles('Hello\n你好','sample.srt');
+  await media.savePosition(latest.id,2);
+  assert.equal(await media.getPosition(latest.id),2);
+  assert.equal((await media.getActiveVideo()).blob,video);
   assert.equal((await media.listVideos()).length,2);
   assert.equal((await media.getActiveVideo()).name,'clip.mp4');
   assert.equal((await media.getSubtitlesFor(await media.getActiveVideo())).text,'Hello\n你好');
   const second=await media.saveVideo({name:'second.mp4',type:'video/mp4',size:30});
   await media.saveSubtitles('Second','second.srt');
+  await media.savePosition(second.id,1);
+  assert.equal(await media.getPosition(second.id),1);
   assert.equal((await media.listVideos()).length,3);
   await media.activateVideo(latest.id);
+  assert.equal(await media.getPosition(latest.id),2);
   assert.equal((await media.getSubtitlesFor(await media.getActiveVideo())).text,'Hello\n你好');
   await media.activateVideo(second.id);
   assert.equal((await media.getSubtitlesFor(await media.getActiveVideo())).text,'Second');
@@ -49,6 +55,7 @@ test('stores and restores the latest video and subtitles on the current device',
   await media.clearSubtitles();
   assert.equal(await media.getSubtitlesFor(await media.getActiveVideo()),null);
   await media.deleteVideo(latest.id);
+  assert.equal(await media.getPosition(latest.id),0);
   assert.equal((await media.getActiveVideo()).name,'second.mp4');
   await media.clearMedia();
   assert.equal((await media.listVideos()).length,0);
