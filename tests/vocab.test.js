@@ -37,3 +37,15 @@ test('review choices schedule familiar words and keep difficult words in the que
   assert.equal(items[0].reviewStreak,0);
   assert.equal(vocab.dueWords(items,now+86400000).length,1);
 });
+
+test('wordbook backup restores notes and review progress without replacing current words',()=>{
+  const saved=[{word:'hello',note:'旧笔记',reviewStreak:2,nextReviewAt:'2026-11-20T00:00:00.000Z'},{word:'progress',note:'进步'}];
+  const restored=vocab.parseBackup(JSON.stringify(vocab.makeBackup(saved)));
+  assert.equal(restored[0].reviewStreak,2);
+  assert.equal(restored[1].note,'进步');
+  const merged=vocab.mergeWordbooks([{word:'hello',note:'当前笔记'}],restored);
+  assert.deepEqual(merged.map(item=>item.word),['hello','progress']);
+  assert.equal(merged[0].note,'当前笔记');
+  assert.throws(()=>vocab.parseBackup('{bad'),/JSON/);
+  assert.throws(()=>vocab.parseBackup(JSON.stringify({words:saved})),/EnglishAI/);
+});

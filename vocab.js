@@ -22,5 +22,25 @@
     const updated={...item,reviewStreak:streak,reviewCount:(Number(item.reviewCount)||0)+1,lastReviewedAt:new Date(now).toISOString(),nextReviewAt:remembered?new Date(now+days*86400000).toISOString():null};
     return remembered?items.map(x=>normalizeWord(x.word)===word?updated:x):[...items.filter(x=>normalizeWord(x.word)!==word),updated];
   }
-  return{KEY,normalizeWord,localDefinition,parseDictionary,parseTranslation,readWordbook,writeWordbook,upsertWord,dueWords,rateReview};
+  const TEXT_LIMITS={translation:200,definition:500,phonetic:80,partOfSpeech:80,example:500,sentence:500,sentenceZh:500,note:1000,savedAt:60,lastReviewedAt:60,nextReviewAt:60};
+  function cleanEntry(item){
+    if(!item||typeof item.word!=='string')return null;
+    const word=normalizeWord(item.word);if(!word)return null;
+    const clean={word};
+    for(const [field,limit] of Object.entries(TEXT_LIMITS))if(typeof item[field]==='string')clean[field]=item[field].slice(0,limit);
+    if(Number.isFinite(item.reviewStreak))clean.reviewStreak=Math.max(0,Math.min(5,Math.trunc(item.reviewStreak)));
+    if(Number.isFinite(item.reviewCount))clean.reviewCount=Math.max(0,Math.min(100000,Math.trunc(item.reviewCount)));
+    if(clean.nextReviewAt&&!Number.isFinite(Date.parse(clean.nextReviewAt)))clean.nextReviewAt=null;
+    return clean;
+  }
+  function makeBackup(items){return{format:'englishai-wordbook',version:1,exportedAt:new Date().toISOString(),words:items.slice(0,500).map(cleanEntry).filter(Boolean)}}
+  function parseBackup(text){
+    let data;try{data=JSON.parse(text)}catch{throw Error('文件不是有效的 JSON 备份。')}
+    if(data?.format!=='englishai-wordbook'||data.version!==1||!Array.isArray(data.words)||data.words.length>500)throw Error('这不是支持的 EnglishAI 单词本备份。');
+    const seen=new Set(),words=[];
+    for(const item of data.words){const clean=cleanEntry(item);if(!clean||seen.has(clean.word))continue;seen.add(clean.word);words.push(clean)}
+    return words;
+  }
+  function mergeWordbooks(current,incoming){const seen=new Set(current.map(item=>normalizeWord(item.word)));return[...current,...incoming.filter(item=>{const word=normalizeWord(item.word);if(!word||seen.has(word))return false;seen.add(word);return true})].slice(0,500)}
+  return{KEY,normalizeWord,localDefinition,parseDictionary,parseTranslation,readWordbook,writeWordbook,upsertWord,dueWords,rateReview,makeBackup,parseBackup,mergeWordbooks};
 });

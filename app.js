@@ -1,7 +1,9 @@
 const $=id=>document.getElementById(id);
 const {parseSubtitles,compareText,clozeFor,quizFor}=EnglishAICore;
-const {normalizeWord,localDefinition,parseDictionary,parseTranslation,readWordbook,writeWordbook,upsertWord,dueWords,rateReview}=EnglishAIVocab;
+const {normalizeWord,localDefinition,parseDictionary,parseTranslation,readWordbook,writeWordbook,upsertWord,dueWords,rateReview,makeBackup,parseBackup,mergeWordbooks}=EnglishAIVocab;
+const mediaStore=typeof EnglishAIMedia==='undefined'?null:EnglishAIMedia;
 let cues=[],idx=-1,videoURL=null,recURL=null,stream=null,recorder=null,chunks=[],recognition=null,clozeOffset=0,quizIndex=0,quizAnswered=false,activeUtterance=null;
+let mediaRevision=0;
 let storage=null;try{storage=window.localStorage}catch{}
 let wordbook=storage?readWordbook(storage):[],currentWord=null,wordRequest=0,reviewIndex=0,reviewAll=false;
 const sample='1\n00:00:01,000 --> 00:00:04,000\nHello, how are you?\n你好，你好吗？\n\n2\n00:00:04,000 --> 00:00:07,000\nI am learning English every day.\n我每天都在学习英语。\n\n3\n00:00:07,000 --> 00:00:10,000\nPractice makes progress.\n练习带来进步。\n\n4\n00:00:10,000 --> 00:00:13,000\nLet us try one more time.\n我们再试一次。';
@@ -145,7 +147,7 @@ function pronounceReviewWord(){
   setTimeout(()=>{if(activeUtterance===utterance&&!started){activeUtterance=null;window.speechSynthesis.cancel();status.textContent='发音未能启动。请用 Safari 打开、调高媒体音量后再点一次。'}},5000);
 }
 function renderWordbook(){
-  $('wordCount').textContent=wordbook.length;const list=$('wordList');list.replaceChildren();
+  $('wordCount').textContent=wordbook.length;$('exportWordbook').disabled=!wordbook.length;const list=$('wordList');list.replaceChildren();
   if(!wordbook.length)list.textContent='还没有收藏单词。点字幕中的英文单词开始。';
   wordbook.forEach(item=>{
     const row=document.createElement('div');row.className='word-row';
@@ -178,6 +180,28 @@ $('closeWord').onclick=()=>{$('wordSheet').classList.add('hidden');wordRequest++
 $('wordSheet').onclick=event=>{if(event.target===$('wordSheet'))$('closeWord').click()};
 $('saveWord').onclick=()=>saveCurrentWord(false);
 $('saveNote').onclick=()=>saveCurrentWord(true);
+$('exportWordbook').onclick=()=>{
+  if(!wordbook.length)return;
+  const blob=new Blob([JSON.stringify(makeBackup(wordbook),null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob),link=document.createElement('a');
+  link.href=url;link.download='EnglishAI-wordbook-'+new Date().toISOString().slice(0,10)+'.json';
+  document.body.append(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),60000);
+  $('backupStatus').textContent='已生成单词本备份。请把 JSON 文件保存到“文件”或电脑中。';
+};
+$('importWordbookButton').onclick=()=>$('importWordbookFile').click();
+$('importWordbookFile').onchange=async event=>{
+  const file=event.target.files?.[0];if(!file)return;
+  try{
+    if(file.size>1024*1024)throw Error('备份文件超过 1 MB。');
+    const incoming=parseBackup(await file.text()),previous=wordbook.length;
+    wordbook=mergeWordbooks(wordbook,incoming);
+    const saved=storage&&writeWordbook(storage,wordbook);
+    reviewIndex=0;renderWordbook();
+    $('backupStatus').textContent=saved?'已导入 '+(wordbook.length-previous)+' 个新单词；已有单词和笔记保持原样。':'已在本次页面载入，但浏览器未允许永久保存。';
+  }catch(error){$('backupStatus').textContent='导入失败：'+error.message}
+  event.target.value='';
+};
 $('revealWord').onclick=()=>$('reviewAnswer').classList.remove('hidden');
 $('hearReviewWord').onclick=pronounceReviewWord;
 $('reviewAll').onclick=()=>{reviewAll=!reviewAll;reviewIndex=0;renderReview()};
@@ -195,11 +219,40 @@ document.querySelectorAll('.mode').forEach(button=>button.onclick=()=>{
   document.querySelectorAll('.mode').forEach(b=>{const active=b===button;b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active))});
   document.querySelectorAll('.panel').forEach(panel=>panel.classList.toggle('hidden',panel.id!==button.dataset.mode));
 });
-$('videoFile').onchange=e=>{const file=e.target.files[0];if(!file)return;if(videoURL)URL.revokeObjectURL(videoURL);videoURL=URL.createObjectURL(file);$('player').src=videoURL;$('sourceStatus').textContent='已选择视频：'+file.name+'。现在导入字幕即可逐句练习。'};
-$('subtitleFile').onchange=async e=>{const file=e.target.files[0];if(file)loadCues(await file.text(),file.name)};
-$('sample').onclick=()=>loadCues(sample,'示例字幕');
-$('clear').onclick=()=>loadCues('','已清空');
-$('parsePaste').onclick=()=>loadCues($('paste').value,'粘贴字幕');
+async function restoreMedia(){
+  if(!mediaStore){$('localSaveStatus').textContent='当前浏览器不支持本机素材保存；本次仍可正常练习。';return}
+  const revision=mediaRevision;
+  try{
+    const [video,subtitles]=await Promise.all([mediaStore.get('video'),mediaStore.get('subtitles')]);
+    if(revision!==mediaRevision)return;
+    const restored=[];
+    if(video?.blob){videoURL=URL.createObjectURL(video.blob);$('player').src=videoURL;restored.push('视频 '+video.name)}
+    if(subtitles?.text){loadCues(subtitles.text,subtitles.name||'已保存字幕');restored.push('字幕')}
+    $('localSaveStatus').textContent=restored.length?'已从本机恢复：'+restored.join('、')+'。':'尚无本机保存的视频或字幕。';
+  }catch(error){$('localSaveStatus').textContent='无法恢复本机素材：'+error.message}
+}
+$('videoFile').onchange=async e=>{
+  const file=e.target.files[0];if(!file)return;mediaRevision++;
+  if(videoURL)URL.revokeObjectURL(videoURL);videoURL=URL.createObjectURL(file);$('player').src=videoURL;
+  $('sourceStatus').textContent='已选择视频：'+file.name+'。现在导入字幕即可逐句练习。';
+  if(!mediaStore){$('localSaveStatus').textContent='本次可播放；当前浏览器不支持本机保存。';return}
+  $('localSaveStatus').textContent='正在将视频保存到本机…';
+  try{await mediaStore.saveVideo(file);$('localSaveStatus').textContent='视频已保存到当前浏览器。请保留原始文件，以防浏览器清理数据。'}
+  catch(error){$('localSaveStatus').textContent='视频可在本次使用，但未能保存：'+(error.name==='QuotaExceededError'?'手机存储空间不足；以前保存的视频仍可恢复。':error.message)}
+};
+$('subtitleFile').onchange=async e=>{
+  const file=e.target.files[0];if(!file)return;mediaRevision++;
+  const text=await file.text();loadCues(text,file.name);
+  if(mediaStore)try{await mediaStore.saveSubtitles(text,file.name);$('localSaveStatus').textContent='字幕已保存到当前浏览器。'}catch(error){$('localSaveStatus').textContent='字幕已载入，但未能保存：'+error.message}
+};
+$('sample').onclick=()=>{mediaRevision++;loadCues(sample,'示例字幕')};
+$('clear').onclick=async()=>{mediaRevision++;loadCues('','已清空');if(mediaStore)try{await mediaStore.remove('subtitles');$('localSaveStatus').textContent='已清除本机保存的字幕。'}catch(error){$('localSaveStatus').textContent='未能清除本机字幕：'+error.message}};
+$('parsePaste').onclick=async()=>{mediaRevision++;const text=$('paste').value;loadCues(text,'粘贴字幕');if(mediaStore)try{await mediaStore.saveSubtitles(text,'粘贴字幕');$('localSaveStatus').textContent='字幕已保存到当前浏览器。'}catch(error){$('localSaveStatus').textContent='字幕已载入，但未能保存：'+error.message}};
+$('forgetMedia').onclick=async()=>{
+  if(!mediaStore)return;
+  try{await Promise.all([mediaStore.remove('video'),mediaStore.remove('subtitles')]);$('localSaveStatus').textContent='已删除本机保存的视频和字幕；当前页面可继续使用，刷新后不再恢复。'}
+  catch(error){$('localSaveStatus').textContent='未能删除本机素材：'+error.message}
+};
 $('prev').onclick=()=>select(Math.max(0,idx-1),true);
 $('next').onclick=()=>select(Math.min(cues.length-1,idx+1),true);
 $('play').onclick=playCurrent;$('replayVideo').onclick=playCurrent;
@@ -237,4 +290,5 @@ $('recognize').onclick=()=>{
   }catch(error){$('recognize').disabled=false;setFeedback('speechFeedback','无法开始识别：'+error.message,'needs-work')}
 };
 renderLines();renderPractice();renderWordbook();
+restoreMedia();
 if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});

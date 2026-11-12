@@ -6,7 +6,7 @@ const vm=require('node:vm');
 const core=require('../core.js');
 const vocab=require('../vocab.js');
 
-test('sample subtitles support speech and tapped words can be saved with notes',()=>{
+test('sample subtitles support speech and tapped words can be saved with notes',async()=>{
   const elements=new Map();
   function element(){
     const classes=new Set();
@@ -17,9 +17,11 @@ test('sample subtitles support speech and tapped words can be saved with notes',
   class Utterance{constructor(text){this.text=text}}
   const synth={getVoices:()=>[],speak:utterance=>{spoken=utterance},cancel(){}};
   const data=new Map(),storage={getItem:key=>data.get(key)||null,setItem:(key,value)=>data.set(key,value)};
+  const mediaData=new Map(),mediaStore={get:async key=>mediaData.get(key),remove:async key=>mediaData.delete(key),saveVideo:async file=>mediaData.set('video',{blob:file,name:file.name}),saveSubtitles:async(text,name)=>mediaData.set('subtitles',{text,name})};
   const context={
     EnglishAICore:core,
     EnglishAIVocab:vocab,
+    EnglishAIMedia:mediaStore,
     document:{getElementById:get,querySelector:()=>element(),querySelectorAll:()=>[],createElement:element,createTextNode:text=>({textContent:text}),addEventListener(){}},
     window:{isSecureContext:true,SpeechSynthesisUtterance:Utterance,speechSynthesis:synth,localStorage:storage},
     navigator:{userAgent:'iPhone',platform:'iPhone',maxTouchPoints:1},
@@ -54,4 +56,13 @@ test('sample subtitles support speech and tapped words can be saved with notes',
   assert.match(get('reviewWord').textContent,/本轮复习完成/);
   get('reviewAll').onclick();
   assert.equal(get('reviewWord').textContent,'hello');
+  const backup=JSON.stringify(vocab.makeBackup([{word:'progress',note:'进步'}]));
+  await get('importWordbookFile').onchange({target:{files:[{size:backup.length,text:async()=>backup}],value:'backup.json'}});
+  assert.equal(get('wordCount').textContent,2);
+  assert.match(get('backupStatus').textContent,/已导入 1 个新单词/);
+  await get('videoFile').onchange({target:{files:[{name:'clip.mp4',size:42,type:'video/mp4'}]}});
+  assert.equal(mediaData.get('video').name,'clip.mp4');
+  const srt='1\n00:00:01,000 --> 00:00:02,000\nHello!\n你好';
+  await get('subtitleFile').onchange({target:{files:[{name:'captions.srt',text:async()=>srt}]}});
+  assert.equal(mediaData.get('subtitles').text,srt);
 });
