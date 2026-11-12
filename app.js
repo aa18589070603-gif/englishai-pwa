@@ -2,10 +2,17 @@ const $=id=>document.getElementById(id);
 const {parseSubtitles,compareText,clozeFor,quizFor}=EnglishAICore;
 const {normalizeWord,localDefinition,parseDictionary,parseTranslation,readWordbook,writeWordbook,upsertWord,dueWords,rateReview,makeBackup,parseBackup,mergeWordbooks}=EnglishAIVocab;
 const mediaStore=typeof EnglishAIMedia==='undefined'?null:EnglishAIMedia;
-let cues=[],idx=-1,videoURL=null,activeVideoId=null,trackProgress=true,positionSave=Promise.resolve(),recURL=null,stream=null,recorder=null,chunks=[],recognition=null,clozeOffset=0,quizIndex=0,quizAnswered=false,activeUtterance=null;
+let cues=[],idx=-1,videoURL=null,activeRemote=false,activeVideoId=null,trackProgress=true,positionSave=Promise.resolve(),recURL=null,stream=null,recorder=null,chunks=[],recognition=null,clozeOffset=0,quizIndex=0,quizAnswered=false,activeUtterance=null;
 let mediaRevision=0;
 let storage=null;try{storage=window.localStorage}catch{}
 let wordbook=storage?readWordbook(storage):[],currentWord=null,wordRequest=0,reviewIndex=0,reviewAll=false;
+const stageChecks=[...document.querySelectorAll('[data-stage]')];
+let completedStages=[];try{const saved=JSON.parse(storage?.getItem('englishai-v2-stages')||'[]');if(Array.isArray(saved))completedStages=saved.filter(x=>typeof x==='string')}catch{}
+function renderStageStatus(){
+  $('stageStatus').textContent='已完成 '+completedStages.length+' / '+stageChecks.length+' 个阶段。完成情况仅保存在当前浏览器，由你自己确认。';
+}
+for(const check of stageChecks){check.checked=completedStages.includes(check.dataset.stage);check.onchange=()=>{completedStages=stageChecks.filter(x=>x.checked).map(x=>x.dataset.stage);try{storage?.setItem('englishai-v2-stages',JSON.stringify(completedStages));renderStageStatus()}catch{$('stageStatus').textContent='当前浏览器未能保存阶段记录，请保留自己的学习笔记。'}}}
+renderStageStatus();
 const sample='1\n00:00:01,000 --> 00:00:04,000\nHello, how are you?\n你好，你好吗？\n\n2\n00:00:04,000 --> 00:00:07,000\nI am learning English every day.\n我每天都在学习英语。\n\n3\n00:00:07,000 --> 00:00:10,000\nPractice makes progress.\n练习带来进步。\n\n4\n00:00:10,000 --> 00:00:13,000\nLet us try one more time.\n我们再试一次。';
 
 function setFeedback(id,message,kind=''){
@@ -51,6 +58,7 @@ function playCurrent(){
   if(idx<0&&cues.length)select(0);
   if(!currentCue()){setPlayStatus('请先载入字幕。');return}
   if(!videoURL){speak();return}
+  if(activeRemote&&$('player').error){speak();return}
   const video=$('player');video.currentTime=currentCue().start;
   video.play().then(()=>setPlayStatus('正在播放视频原句。')).catch(()=>setPlayStatus('视频无法播放，请检查文件格式。'));
 }
@@ -222,9 +230,33 @@ document.querySelectorAll('.mode').forEach(button=>button.onclick=()=>{
 });
 let pendingVideoSave=Promise.resolve();
 function showVideo(video){
-  if(videoURL)URL.revokeObjectURL(videoURL);
+  if(videoURL?.startsWith('blob:'))URL.revokeObjectURL(videoURL);
   activeVideoId=video.id||null;
-  videoURL=URL.createObjectURL(video.blob);$('player').src=videoURL;
+  activeRemote=!!video.url&&!video.blob;
+  videoURL=video.blob?URL.createObjectURL(video.blob):video.url;$('player').src=videoURL;
+}
+function offerFile(blob,name){
+  const url=URL.createObjectURL(blob),link=document.createElement('a');
+  link.href=url;link.download=name;document.body.append(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),60000);
+}
+async function downloadOnlineVideo(video){
+  try{
+    if(new URL(video.url).pathname.toLowerCase().endsWith('.m3u8'))throw Error('这个链接是分段直播清单，不能作为单个视频文件保存。');
+    $('localSaveStatus').textContent='正在下载 '+video.name+'，请保持页面打开…';
+    const response=await fetch(video.url,{mode:'cors',credentials:'omit'});
+    if(!response.ok)throw Error('网站返回 '+response.status+'。');
+    const length=Number(response.headers.get('content-length')||0);
+    if(length>200*1048576)throw Error('文件超过 200 MB，请到原网站下载。');
+    const type=(response.headers.get('content-type')||'').toLowerCase();
+    if(type.includes('text/html'))throw Error('这个网址返回的是网页，请使用视频文件直链。');
+    const blob=await response.blob();
+    if(!blob.size||blob.size>200*1048576)throw Error('文件为空或超过 200 MB。');
+    const saved=await mediaStore.saveDownloadedVideo(video.id,blob);
+    if(activeVideoId===video.id)showVideo(saved);
+    await renderSavedVideos();
+    $('localSaveStatus').textContent='在线视频已下载并保存在本机（'+(blob.size/1048576).toFixed(1)+' MB）。可离线打开，也可导出文件传到手机。';
+  }catch(error){$('localSaveStatus').textContent='视频网址已保留，但下载到本机失败：'+error.message+' 若网站不允许跨站下载，请到原网站下载视频后用“选择视频”导入。'}
 }
 async function renderSavedVideos(){
   if(!mediaStore)return;
@@ -235,12 +267,16 @@ async function renderSavedVideos(){
     for(const video of videos){
       const row=document.createElement('div');row.className='saved-media-row';
       const name=document.createElement('span');name.className='media-name';name.textContent=video.name;
-      const detail=document.createElement('small');const position=await mediaStore.getPosition(video.id);detail.textContent=(video.size/1048576).toFixed(1)+' MB'+(video.subtitleText?' · 有字幕':'')+(position?' · 上次第 '+(position+1)+' 句':'');name.append(detail);
+      const detail=document.createElement('small');const position=await mediaStore.getPosition(video.id);detail.textContent=(video.blob?(video.url?'已下载 · ':'')+(video.size/1048576).toFixed(1)+' MB':'在线链接')+(video.subtitleText?' · 有字幕':'')+(position?' · 上次第 '+(position+1)+' 句':'');name.append(detail);
       const open=document.createElement('button');open.type='button';open.className='ghost';open.textContent='打开';
       open.onclick=async()=>{try{mediaRevision++;const selected=await mediaStore.activateVideo(video.id),subtitles=await mediaStore.getSubtitlesFor(selected),position=await mediaStore.getPosition(selected.id);showVideo(selected);loadCues(subtitles?.text||'',subtitles?.name||'未保存字幕',position);$('localSaveStatus').textContent='已打开保存的视频：'+selected.name+(subtitles?.text?'，并回到上次练习的句子。':'。请为它导入字幕。')}catch(error){$('localSaveStatus').textContent='无法打开视频：'+error.message}};
+      const transfer=document.createElement('button');transfer.type='button';transfer.className='ghost';transfer.textContent=video.blob?'导出视频':'离线保存';
+      transfer.onclick=()=>video.blob?offerFile(video.blob,video.name):downloadOnlineVideo(video);
+      const subtitles=document.createElement('button');subtitles.type='button';subtitles.className='ghost';subtitles.textContent='导出字幕';
+      subtitles.onclick=()=>offerFile(new Blob([video.subtitleText],{type:'text/plain;charset=utf-8'}),video.subtitleName||'EnglishAI-subtitles.srt');
       const remove=document.createElement('button');remove.type='button';remove.className='remove-media';remove.textContent='删除';remove.setAttribute('aria-label','删除保存的视频 '+video.name);
       remove.onclick=async()=>{if(!window.confirm('确定从本机删除“'+video.name+'”吗？'))return;try{await mediaStore.deleteVideo(video.id);await renderSavedVideos();$('localSaveStatus').textContent='已删除本机保存的视频：'+video.name+'。当前播放不会立即中断。'}catch(error){$('localSaveStatus').textContent='删除失败：'+error.message}};
-      row.append(name,open,remove);list.append(row);
+      row.append(name,open,transfer);if(video.subtitleText)row.append(subtitles);row.append(remove);list.append(row);
     }
   }catch(error){list.textContent='无法读取已保存的视频：'+error.message}
 }
@@ -251,7 +287,7 @@ async function restoreMedia(){
     const video=await mediaStore.getActiveVideo(),subtitles=await mediaStore.getSubtitlesFor(video),position=await mediaStore.getPosition(video?.id);
     if(revision!==mediaRevision)return;
     const restored=[];
-    if(video?.blob){showVideo(video);restored.push('视频 '+video.name)}
+    if(video?.blob||video?.url){showVideo(video);restored.push((video.blob?'视频 ':'在线视频 ')+video.name)}
     if(subtitles?.text){loadCues(subtitles.text,subtitles.name||'已保存字幕',position);restored.push('字幕'+(position?'（第 '+(idx+1)+' 句）':''))}
     $('localSaveStatus').textContent=restored.length?'已从本机恢复：'+restored.join('、')+'。':'尚无本机保存的视频或字幕。';
     await renderSavedVideos();
@@ -267,6 +303,18 @@ $('videoFile').onchange=async e=>{
   pendingVideoSave=mediaStore.saveVideo(file);
   try{const saved=await pendingVideoSave;if(videoURL===chosenURL)activeVideoId=saved.id;await renderSavedVideos();$('localSaveStatus').textContent='视频已加入本机素材库。请保留原始文件，以防浏览器清理数据。'}
   catch(error){$('localSaveStatus').textContent='视频可在本次使用，但未能保存：'+(error.name==='QuotaExceededError'?'手机存储空间不足；以前保存的视频仍可恢复。':error.message)}
+};
+$('connectRemoteVideo').onclick=async()=>{
+  let url;
+  try{url=new URL($('remoteVideoUrl').value.trim());if(url.protocol!=='https:'||url.username||url.password)throw Error('请使用 HTTPS 视频直链。');url.hash=''}
+  catch{$('localSaveStatus').textContent='网址无效。请粘贴以 https:// 开头、可直接播放的视频文件链接。';return}
+  mediaRevision++;showVideo({url:url.href});loadCues('','在线视频待导入字幕');
+  $('sourceStatus').textContent='正在连接在线视频。若无法播放，请检查这是否为视频文件直链，而不是普通网页。';
+  if(!mediaStore){$('localSaveStatus').textContent='已连接网址；当前浏览器无法保存到本机素材库。';return}
+  const chosenURL=videoURL;
+  pendingVideoSave=mediaStore.saveRemoteVideo(url.href);
+  try{const saved=await pendingVideoSave;if(videoURL===chosenURL)activeVideoId=saved.id;await renderSavedVideos();$('localSaveStatus').textContent='已保存视频网址，正在尝试下载到本机…';await downloadOnlineVideo(saved)}
+  catch(error){$('localSaveStatus').textContent='视频网址未能保存：'+error.message}
 };
 $('subtitleFile').onchange=async e=>{
   const file=e.target.files[0];if(!file)return;mediaRevision++;
@@ -286,6 +334,8 @@ $('prev').onclick=()=>select(Math.max(0,idx-1),true);
 $('next').onclick=()=>select(Math.min(cues.length-1,idx+1),true);
 $('play').onclick=playCurrent;$('replayVideo').onclick=playCurrent;
 $('player').addEventListener('timeupdate',()=>{const cue=currentCue(),video=$('player');if(!cue||video.currentTime<cue.end)return;if($('loop').checked){video.currentTime=cue.start;if(video.paused)video.play().catch(()=>{})}else video.pause()});
+$('player').addEventListener('loadedmetadata',()=>{if(activeRemote)$('sourceStatus').textContent='在线视频已连接。导入对应的 SRT/VTT 字幕后即可逐句练习。'});
+$('player').addEventListener('error',()=>{if(activeRemote)$('sourceStatus').textContent='这个网址无法作为视频播放。请换 MP4 等文件直链，或检查网站是否禁止外站播放；已有字幕仍可用设备英文朗读。'});
 $('speakShadow').onclick=speak;$('hearDictation').onclick=speak;
 $('checkDictation').onclick=()=>{const cue=currentCue();if(!cue){setFeedback('dictationFeedback','请先载入字幕。','needs-work');return}const result=feedbackText(cue.en,$('dictationInput').value);setFeedback('dictationFeedback',result.message,result.kind)};
 $('checkCloze').onclick=()=>{const cue=currentCue(),cloze=cue&&clozeFor(cue,clozeOffset);if(!cloze){setFeedback('clozeFeedback','请先载入英文字幕。','needs-work');return}const result=compareText(cloze.answer,$('clozeInput').value);setFeedback('clozeFeedback',result.exact?'答对了：'+cloze.answer:'参考答案：'+cloze.answer,result.exact?'good':'needs-work')};
@@ -321,3 +371,4 @@ $('recognize').onclick=()=>{
 renderLines();renderPractice();renderWordbook();
 restoreMedia();
 if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
+

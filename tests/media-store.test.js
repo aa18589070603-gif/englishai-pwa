@@ -23,7 +23,7 @@ test('stores and restores the latest video and subtitles on the current device',
     const tx={objectStore(){return Object.fromEntries(['get','put','getAll','delete','clear'].map(method=>[method,value=>operation(method,value)]))}};return tx;
   }};
   const indexedDB={open(){const request={result:db};queueMicrotask(()=>{request.onupgradeneeded?.();request.onsuccess?.()});return request}};
-  const context={indexedDB,Promise,Error};
+  const context={indexedDB,Promise,Error,URL,Blob};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../media-store.js'),'utf8'),context);
   const media=context.EnglishAIMedia;
   records.set('video',{id:'video',blob:{name:'old.mp4'},name:'old.mp4',size:10});
@@ -57,6 +57,19 @@ test('stores and restores the latest video and subtitles on the current device',
   await media.deleteVideo(latest.id);
   assert.equal(await media.getPosition(latest.id),0);
   assert.equal((await media.getActiveVideo()).name,'second.mp4');
+  assert.throws(()=>media.saveRemoteVideo('http://example.com/video.mp4'),/HTTPS/);
+  const online=await media.saveRemoteVideo('https://example.com/lesson.mp4?edition=1#preview');
+  assert.equal(online.url,'https://example.com/lesson.mp4?edition=1');
+  assert.equal((await media.getActiveVideo()).id,online.id);
+  await media.saveSubtitles('Online caption','online.srt');
+  assert.equal((await media.getSubtitlesFor(await media.getActiveVideo())).text,'Online caption');
+  const downloaded=await media.saveDownloadedVideo(online.id,new Blob(['video'],{type:'video/mp4'}));
+  assert.equal(downloaded.blob.size,5);
+  assert.equal(downloaded.subtitleText,'Online caption');
+  await media.activateVideo(second.id);
+  await media.activateVideo(online.id);
+  assert.equal((await media.getActiveVideo()).url,online.url);
   await media.clearMedia();
   assert.equal((await media.listVideos()).length,0);
 });
+

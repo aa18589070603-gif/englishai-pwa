@@ -13,6 +13,7 @@ test('sample subtitles support speech and tapped words can be saved with notes',
     return{textContent:'',value:'',src:'',children:[],classList:{add:x=>classes.add(x),remove:x=>classes.delete(x),toggle:x=>classes.has(x)?classes.delete(x):classes.add(x),contains:x=>classes.has(x)},replaceChildren(){this.children=[]},append(...nodes){this.children.push(...nodes)},setAttribute(){},addEventListener(){},focus(){},play(){return Promise.resolve()},querySelectorAll(){return[]}};
   }
   const get=id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)};
+  const stageChecks=['zero','beginner','intermediate','advanced'].map(stage=>({dataset:{stage},checked:false}));
   let spoken=null;
   class Utterance{constructor(text){this.text=text}}
   const synth={getVoices:()=>[],speak:utterance=>{spoken=utterance},cancel(){}};
@@ -25,6 +26,8 @@ test('sample subtitles support speech and tapped words can be saved with notes',
     getPosition:async id=>positions.get(id)||0,
     savePosition:async(id,index)=>{positions.set(id,index)},
     saveVideo:async file=>{const item={id:'video:1',blob:file,name:file.name,size:file.size,subtitleText:''};mediaData.set(item.id,item);activeVideo=item.id;return item},
+    saveRemoteVideo:async url=>{const item={id:'video:2',url,name:'online.mp4',size:0,subtitleText:''};mediaData.set(item.id,item);activeVideo=item.id;return item},
+    saveDownloadedVideo:async(id,blob)=>{const item={...mediaData.get(id),blob,size:blob.size};mediaData.set(id,item);return item},
     saveSubtitles:async(text,name)=>{const item=mediaData.get(activeVideo);item.subtitleText=text;item.subtitleName=name},
     activateVideo:async id=>{activeVideo=id;return mediaData.get(id)},
     clearSubtitles:async()=>{},deleteVideo:async()=>{},clearMedia:async()=>mediaData.clear()
@@ -33,15 +36,18 @@ test('sample subtitles support speech and tapped words can be saved with notes',
     EnglishAICore:core,
     EnglishAIVocab:vocab,
     EnglishAIMedia:mediaStore,
-    document:{getElementById:get,querySelector:()=>element(),querySelectorAll:()=>[],createElement:element,createTextNode:text=>({textContent:text}),addEventListener(){}},
+    document:{getElementById:get,querySelector:()=>element(),querySelectorAll:selector=>selector==='[data-stage]'?stageChecks:[],createElement:element,createTextNode:text=>({textContent:text}),addEventListener(){}},
     window:{isSecureContext:true,SpeechSynthesisUtterance:Utterance,speechSynthesis:synth,localStorage:storage},
     navigator:{userAgent:'iPhone',platform:'iPhone',maxTouchPoints:1},
     location:{protocol:'http:'},
     setTimeout(){},
-    URL:{createObjectURL:()=>''}
+    URL:class extends URL{static createObjectURL(){return'blob:test'}static revokeObjectURL(){}},
+    fetch:async()=>new Response(new Blob(['video'],{type:'video/mp4'}),{headers:{'content-type':'video/mp4'}})
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../app.js'),'utf8'),context);
   get('sample').onclick();
+  stageChecks[0].checked=true;stageChecks[0].onchange();
+  assert.deepEqual(JSON.parse(data.get('englishai-v2-stages')),['zero']);
   get('play').onclick();
   assert.equal(spoken?.text,'Hello, how are you?');
   assert.equal(spoken?.lang,'en-US');
@@ -90,4 +96,11 @@ test('sample subtitles support speech and tapped words can be saved with notes',
   get('next').onclick();
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(positions.get('video:1'),1);
+  get('remoteVideoUrl').value='https://example.com/online.mp4';
+  await get('connectRemoteVideo').onclick();
+  assert.equal(mediaData.get('video:2').url,'https://example.com/online.mp4');
+  assert.equal(mediaData.get('video:2').blob.size,5);
+  await get('subtitleFile').onchange({target:{files:[{name:'online.srt',text:async()=>srt}]}});
+  assert.equal(mediaData.get('video:2').subtitleText,srt);
 });
+

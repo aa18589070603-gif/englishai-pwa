@@ -17,6 +17,14 @@
 
 本机保存受可用空间和浏览器策略限制。大视频保存失败时仍可在当前页面使用，页面会显示原因。Safari 可能在设备空间不足等情况下清除网站数据，因此原始视频仍应保留在“照片”或“文件”；切换 Netlify 网址也不会自动转移本机素材。[WebKit 存储政策](https://webkit.org/blog/14403/updates-to-storage-policy/)说明了空间限制与数据清除条件。
 
+## 在线资源与离线学习
+
+“准备素材”支持粘贴 HTTPS 视频文件直链。连接后，应用会尝试把不超过 200 MB 的视频下载到当前设备的本机素材库；若来源网站禁止跨站下载，网址仍会保存，但离线播放不可用。普通网页、YouTube 页面或分段直播地址不能当作 MP4 直链。已下载的视频和对应字幕可分别导出，再通过 AirDrop、iCloud Drive 或“文件”传入 iPhone。浏览器素材库只在当前设备、当前网址有效；下载成文件并另存备份更可靠。
+
+页面提供四个学习阶段：零基础、初级、中级、高级。每阶段有练习目标和本机完成勾选；阶段记录是自评，不是等级考试。另有日常对话和职场话题的官方课程入口。VOA Learning English 的 [Level 1](https://learningenglish.voanews.com/p/5644.html) 与 [Level 2](https://learningenglish.voanews.com/p/6765.html) 提供连续课程；British Council 的课程请在其原网站学习，本站只提供链接，不打包其内容。
+
+离线入门资料包在本项目工作区的 `outputs/EnglishAI-offline-starter-20261112`，含三段 VOA 原版 MP4、对应官方教学 PDF 和中文使用说明。它是前三个阶段的起步示例，不是整套课程，也没有与视频逐句对齐的 SRT/VTT；教学 PDF 中有英文对话稿。导入后可先用普通视频播放、录音跟读；逐句循环、听写、填空与 Quiz 需自行导入对应的带时间轴字幕。[VOA 的内容使用说明](https://learningenglish.voanews.com/p/6861.html)允许在注明来源的前提下使用其原版学习资料；第三方新闻社素材不在此范围。
+
 ## 本地检查
 
 无需安装依赖。运行 `node --test tests/*.test.js` 检查字幕解析、练习题、示例字幕朗读、本机保存、单词本和 AI 服务端请求逻辑。使用任意静态服务器打开根目录进行桌面预览；麦克风、语音识别与 PWA 安装应在 HTTPS 页面测试。静态服务器不会提供 AI 服务端，AI 入口会显示“待接入”。
@@ -39,3 +47,4 @@ AI 密钥只放在 Netlify 的环境变量中，**不要贴到网页、聊天、
 然后在 Netlify 项目的 **Environment variables** 新增 `OPENAI_API_KEY`，值填入你自己的 OpenAI API 密钥；确保变量可供 Functions 使用，保存后重新部署 `englishai-v2`。手机 Safari 打开预览网址，进入“AI 对话”；顶部应显示“已连接”。密钥配置和运行方式见 [Netlify Functions 环境变量文档](https://docs.netlify.com/build/functions/environment-variables/)。服务端使用 [OpenAI Responses API](https://developers.openai.com/api/docs/guides/text) 和 `gpt-6-luna`，限制每次消息长度、历史和回复字数，并按 IP 限制请求频率；仍建议在 OpenAI 账户设置自己的用量预算。
 
 当前开发 PR 不会更改或合并 `main`，GitHub Pages 的 V1 也不会因预览部署而改变。
+
