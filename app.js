@@ -219,38 +219,64 @@ document.querySelectorAll('.mode').forEach(button=>button.onclick=()=>{
   document.querySelectorAll('.mode').forEach(b=>{const active=b===button;b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active))});
   document.querySelectorAll('.panel').forEach(panel=>panel.classList.toggle('hidden',panel.id!==button.dataset.mode));
 });
+let pendingVideoSave=Promise.resolve();
+function showVideo(video){
+  if(videoURL)URL.revokeObjectURL(videoURL);
+  videoURL=URL.createObjectURL(video.blob);$('player').src=videoURL;
+}
+async function renderSavedVideos(){
+  if(!mediaStore)return;
+  const list=$('savedVideoList');list.replaceChildren();
+  try{
+    const videos=await mediaStore.listVideos();$('savedVideoCount').textContent=videos.length;
+    if(!videos.length){list.textContent='还没有保存视频。';return}
+    for(const video of videos){
+      const row=document.createElement('div');row.className='saved-media-row';
+      const name=document.createElement('span');name.className='media-name';name.textContent=video.name;
+      const detail=document.createElement('small');detail.textContent=(video.size/1048576).toFixed(1)+' MB'+(video.subtitleText?' · 有字幕':'');name.append(detail);
+      const open=document.createElement('button');open.type='button';open.className='ghost';open.textContent='打开';
+      open.onclick=async()=>{try{mediaRevision++;const selected=await mediaStore.activateVideo(video.id),subtitles=await mediaStore.getSubtitlesFor(selected);showVideo(selected);loadCues(subtitles?.text||'',subtitles?.name||'未保存字幕');$('localSaveStatus').textContent='已打开保存的视频：'+selected.name+(subtitles?.text?'，并载入对应字幕。':'。请为它导入字幕。')}catch(error){$('localSaveStatus').textContent='无法打开视频：'+error.message}};
+      const remove=document.createElement('button');remove.type='button';remove.className='remove-media';remove.textContent='删除';remove.setAttribute('aria-label','删除保存的视频 '+video.name);
+      remove.onclick=async()=>{if(!window.confirm('确定从本机删除“'+video.name+'”吗？'))return;try{await mediaStore.deleteVideo(video.id);await renderSavedVideos();$('localSaveStatus').textContent='已删除本机保存的视频：'+video.name+'。当前播放不会立即中断。'}catch(error){$('localSaveStatus').textContent='删除失败：'+error.message}};
+      row.append(name,open,remove);list.append(row);
+    }
+  }catch(error){list.textContent='无法读取已保存的视频：'+error.message}
+}
 async function restoreMedia(){
   if(!mediaStore){$('localSaveStatus').textContent='当前浏览器不支持本机素材保存；本次仍可正常练习。';return}
   const revision=mediaRevision;
   try{
-    const [video,subtitles]=await Promise.all([mediaStore.get('video'),mediaStore.get('subtitles')]);
+    const video=await mediaStore.getActiveVideo(),subtitles=await mediaStore.getSubtitlesFor(video);
     if(revision!==mediaRevision)return;
     const restored=[];
-    if(video?.blob){videoURL=URL.createObjectURL(video.blob);$('player').src=videoURL;restored.push('视频 '+video.name)}
+    if(video?.blob){showVideo(video);restored.push('视频 '+video.name)}
     if(subtitles?.text){loadCues(subtitles.text,subtitles.name||'已保存字幕');restored.push('字幕')}
     $('localSaveStatus').textContent=restored.length?'已从本机恢复：'+restored.join('、')+'。':'尚无本机保存的视频或字幕。';
+    await renderSavedVideos();
   }catch(error){$('localSaveStatus').textContent='无法恢复本机素材：'+error.message}
 }
 $('videoFile').onchange=async e=>{
   const file=e.target.files[0];if(!file)return;mediaRevision++;
-  if(videoURL)URL.revokeObjectURL(videoURL);videoURL=URL.createObjectURL(file);$('player').src=videoURL;
+  showVideo({blob:file});loadCues('','新视频待导入字幕');
   $('sourceStatus').textContent='已选择视频：'+file.name+'。现在导入字幕即可逐句练习。';
   if(!mediaStore){$('localSaveStatus').textContent='本次可播放；当前浏览器不支持本机保存。';return}
   $('localSaveStatus').textContent='正在将视频保存到本机…';
-  try{await mediaStore.saveVideo(file);$('localSaveStatus').textContent='视频已保存到当前浏览器。请保留原始文件，以防浏览器清理数据。'}
+  pendingVideoSave=mediaStore.saveVideo(file);
+  try{await pendingVideoSave;await renderSavedVideos();$('localSaveStatus').textContent='视频已加入本机素材库。请保留原始文件，以防浏览器清理数据。'}
   catch(error){$('localSaveStatus').textContent='视频可在本次使用，但未能保存：'+(error.name==='QuotaExceededError'?'手机存储空间不足；以前保存的视频仍可恢复。':error.message)}
 };
 $('subtitleFile').onchange=async e=>{
   const file=e.target.files[0];if(!file)return;mediaRevision++;
   const text=await file.text();loadCues(text,file.name);
-  if(mediaStore)try{await mediaStore.saveSubtitles(text,file.name);$('localSaveStatus').textContent='字幕已保存到当前浏览器。'}catch(error){$('localSaveStatus').textContent='字幕已载入，但未能保存：'+error.message}
+  if(mediaStore)try{await pendingVideoSave;await mediaStore.saveSubtitles(text,file.name);await renderSavedVideos();$('localSaveStatus').textContent='字幕已保存到当前视频。'}catch(error){$('localSaveStatus').textContent='字幕已载入，但未能保存：'+error.message}
 };
 $('sample').onclick=()=>{mediaRevision++;loadCues(sample,'示例字幕')};
-$('clear').onclick=async()=>{mediaRevision++;loadCues('','已清空');if(mediaStore)try{await mediaStore.remove('subtitles');$('localSaveStatus').textContent='已清除本机保存的字幕。'}catch(error){$('localSaveStatus').textContent='未能清除本机字幕：'+error.message}};
-$('parsePaste').onclick=async()=>{mediaRevision++;const text=$('paste').value;loadCues(text,'粘贴字幕');if(mediaStore)try{await mediaStore.saveSubtitles(text,'粘贴字幕');$('localSaveStatus').textContent='字幕已保存到当前浏览器。'}catch(error){$('localSaveStatus').textContent='字幕已载入，但未能保存：'+error.message}};
+$('clear').onclick=async()=>{mediaRevision++;loadCues('','已清空');if(mediaStore)try{await pendingVideoSave;await mediaStore.clearSubtitles();await renderSavedVideos();$('localSaveStatus').textContent='已清除当前视频保存的字幕。'}catch(error){$('localSaveStatus').textContent='未能清除本机字幕：'+error.message}};
+$('parsePaste').onclick=async()=>{mediaRevision++;const text=$('paste').value;loadCues(text,'粘贴字幕');if(mediaStore)try{await pendingVideoSave;await mediaStore.saveSubtitles(text,'粘贴字幕');await renderSavedVideos();$('localSaveStatus').textContent='字幕已保存到当前视频。'}catch(error){$('localSaveStatus').textContent='字幕已载入，但未能保存：'+error.message}};
 $('forgetMedia').onclick=async()=>{
   if(!mediaStore)return;
-  try{await Promise.all([mediaStore.remove('video'),mediaStore.remove('subtitles')]);$('localSaveStatus').textContent='已删除本机保存的视频和字幕；当前页面可继续使用，刷新后不再恢复。'}
+  if(!window.confirm('确定删除本机保存的全部视频和字幕吗？'))return;
+  try{await pendingVideoSave;await mediaStore.clearMedia();await renderSavedVideos();$('localSaveStatus').textContent='已删除本机保存的全部视频和字幕；当前页面可继续使用，刷新后不再恢复。'}
   catch(error){$('localSaveStatus').textContent='未能删除本机素材：'+error.message}
 };
 $('prev').onclick=()=>select(Math.max(0,idx-1),true);

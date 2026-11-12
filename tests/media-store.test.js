@@ -7,24 +7,49 @@ const vm=require('node:vm');
 test('stores and restores the latest video and subtitles on the current device',async()=>{
   const records=new Map();
   const db={createObjectStore(){},close(){},transaction(){
-    const tx={objectStore(){return Object.fromEntries(['get','put','delete'].map(method=>[method,value=>{
-      const request={};queueMicrotask(()=>{
+    let pending=0;
+    const operation=(method,value)=>{
+      const request={};pending++;
+      queueMicrotask(()=>{
         if(method==='put'){records.set(value.id,value);request.result=value.id}
         if(method==='get')request.result=records.get(value);
+        if(method==='getAll')request.result=[...records.values()];
         if(method==='delete')records.delete(value);
-        request.onsuccess?.();queueMicrotask(()=>tx.oncomplete?.());
+        if(method==='clear')records.clear();
+        request.onsuccess?.();pending--;
+        if(!pending)queueMicrotask(()=>tx.oncomplete?.());
       });return request;
-    }]))}};return tx;
+    };
+    const tx={objectStore(){return Object.fromEntries(['get','put','getAll','delete','clear'].map(method=>[method,value=>operation(method,value)]))}};return tx;
   }};
   const indexedDB={open(){const request={result:db};queueMicrotask(()=>{request.onupgradeneeded?.();request.onsuccess?.()});return request}};
   const context={indexedDB,Promise,Error};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../media-store.js'),'utf8'),context);
   const media=context.EnglishAIMedia;
+  records.set('video',{id:'video',blob:{name:'old.mp4'},name:'old.mp4',size:10});
+  records.set('subtitles',{id:'subtitles',text:'Old',name:'old.srt'});
+  assert.equal((await media.getActiveVideo()).name,'old.mp4');
+  assert.equal((await media.getSubtitlesFor(await media.getActiveVideo())).text,'Old');
   const video={name:'clip.mp4',type:'video/mp4',size:42};
-  await media.saveVideo(video);
+  const latest=await media.saveVideo(video);
   await media.saveSubtitles('Hello\n你好','sample.srt');
-  assert.equal((await media.get('video')).name,'clip.mp4');
-  assert.equal((await media.get('subtitles')).text,'Hello\n你好');
-  await media.remove('video');
-  assert.equal(await media.get('video'),undefined);
+  assert.equal((await media.listVideos()).length,2);
+  assert.equal((await media.getActiveVideo()).name,'clip.mp4');
+  assert.equal((await media.getSubtitlesFor(await media.getActiveVideo())).text,'Hello\n你好');
+  const second=await media.saveVideo({name:'second.mp4',type:'video/mp4',size:30});
+  await media.saveSubtitles('Second','second.srt');
+  assert.equal((await media.listVideos()).length,3);
+  await media.activateVideo(latest.id);
+  assert.equal((await media.getSubtitlesFor(await media.getActiveVideo())).text,'Hello\n你好');
+  await media.activateVideo(second.id);
+  assert.equal((await media.getSubtitlesFor(await media.getActiveVideo())).text,'Second');
+  await media.activateVideo('video');
+  assert.equal((await media.getSubtitlesFor(await media.getActiveVideo())).text,'Old');
+  await media.activateVideo(latest.id);
+  await media.clearSubtitles();
+  assert.equal(await media.getSubtitlesFor(await media.getActiveVideo()),null);
+  await media.deleteVideo(latest.id);
+  assert.equal((await media.getActiveVideo()).name,'second.mp4');
+  await media.clearMedia();
+  assert.equal((await media.listVideos()).length,0);
 });

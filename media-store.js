@@ -24,7 +24,44 @@
   }
   const get=id=>run('readonly',store=>store.get(id));
   const remove=id=>run('readwrite',store=>store.delete(id));
-  const saveVideo=file=>run('readwrite',store=>store.put({id:'video',blob:file,name:file.name||'视频',type:file.type||'',size:file.size||0}));
-  const saveSubtitles=(text,name)=>run('readwrite',store=>store.put({id:'subtitles',text:String(text),name:name||'字幕'}));
-  return{get,remove,saveVideo,saveSubtitles};
+  async function listVideos(){
+    const all=await run('readonly',store=>store.getAll());
+    return all.filter(item=>item.id==='video'||item.id.startsWith('video:')).sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''));
+  }
+  async function getActiveVideo(){
+    const active=await get('active-video');
+    return active?.videoId&&await get(active.videoId)||await get('video')||(await listVideos())[0]||null;
+  }
+  async function activateVideo(id){
+    const video=await get(id);if(!video||!video.blob)throw Error('找不到这个已保存的视频。');
+    await run('readwrite',store=>store.put({id:'active-video',videoId:id}));
+    return video;
+  }
+  function saveVideo(file){
+    const id='video:'+Date.now()+':'+Math.random().toString(36).slice(2);
+    const record={id,blob:file,name:file.name||'视频',type:file.type||'',size:file.size||0,savedAt:new Date().toISOString(),subtitleText:'',subtitleName:''};
+    return run('readwrite',store=>{const request=store.put(record);store.put({id:'active-video',videoId:id});return request}).then(()=>record);
+  }
+  async function getSubtitlesFor(video){
+    if(video?.subtitleText)return{text:video.subtitleText,name:video.subtitleName||'已保存字幕'};
+    if(video&&(video.id!=='video'||Object.hasOwn(video,'subtitleText')))return null;
+    return await get('subtitles')||null;
+  }
+  async function saveSubtitles(text,name){
+    const video=await getActiveVideo();
+    if(video)return run('readwrite',store=>store.put({...video,subtitleText:String(text),subtitleName:name||'字幕'}));
+    return run('readwrite',store=>store.put({id:'subtitles',text:String(text),name:name||'字幕'}));
+  }
+  async function clearSubtitles(){
+    const video=await getActiveVideo();
+    if(video)return run('readwrite',store=>store.put({...video,subtitleText:'',subtitleName:''}));
+    return remove('subtitles');
+  }
+  async function deleteVideo(id){
+    await remove(id);
+    const active=await get('active-video');
+    if(active?.videoId===id){const next=(await listVideos())[0];if(next)await activateVideo(next.id);else await remove('active-video')}
+  }
+  const clearMedia=()=>run('readwrite',store=>store.clear());
+  return{get,remove,listVideos,getActiveVideo,activateVideo,saveVideo,getSubtitlesFor,saveSubtitles,clearSubtitles,deleteVideo,clearMedia};
 });
