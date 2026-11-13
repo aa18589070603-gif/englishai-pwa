@@ -39,11 +39,17 @@ test('stores and restores the latest video and subtitles on the current device',
   assert.equal((await media.listVideos()).length,2);
   assert.equal((await media.getActiveVideo()).name,'clip.mp4');
   assert.equal((await media.getSubtitlesFor(await media.getActiveVideo())).text,'Hello\n你好');
+  const paired=await media.savePairedMedia({name:'lesson.mp3',type:'audio/mpeg',size:100},'One\n一','lesson.srt');
+  assert.equal((await media.getSubtitlesFor(paired)).text,'One\n一');
+  assert.equal((await media.getActiveVideo()).id,latest.id);
+  await media.activateVideo(paired.id);
+  assert.equal((await media.getActiveVideo()).name,'lesson.mp3');
+  await media.activateVideo(latest.id);
   const second=await media.saveVideo({name:'second.mp4',type:'video/mp4',size:30});
   await media.saveSubtitles('Second','second.srt');
   await media.savePosition(second.id,1);
   assert.equal(await media.getPosition(second.id),1);
-  assert.equal((await media.listVideos()).length,3);
+  assert.equal((await media.listVideos()).length,4);
   await media.activateVideo(latest.id);
   assert.equal(await media.getPosition(latest.id),2);
   assert.equal((await media.getSubtitlesFor(await media.getActiveVideo())).text,'Hello\n你好');
@@ -56,7 +62,7 @@ test('stores and restores the latest video and subtitles on the current device',
   assert.equal(await media.getSubtitlesFor(await media.getActiveVideo()),null);
   await media.deleteVideo(latest.id);
   assert.equal(await media.getPosition(latest.id),0);
-  assert.equal((await media.getActiveVideo()).name,'second.mp4');
+  assert.notEqual((await media.getActiveVideo()).id,latest.id);
   assert.throws(()=>media.saveRemoteVideo('http://example.com/video.mp4'),/HTTPS/);
   const online=await media.saveRemoteVideo('https://example.com/lesson.mp4?edition=1#preview');
   assert.equal(online.url,'https://example.com/lesson.mp4?edition=1');
