@@ -52,6 +52,11 @@
     const record={id,blob:file,name:file.name||'视频',type:file.type||'',size:file.size||0,savedAt:new Date().toISOString(),subtitleText:'',subtitleName:''};
     return run('readwrite',store=>{const request=store.put(record);store.put({id:'active-video',videoId:id});return request}).then(()=>record);
   }
+  function savePairedMedia(file,subtitleText,subtitleName){
+    const id='video:'+Date.now()+':'+Math.random().toString(36).slice(2);
+    const record={id,blob:file,name:file.name||'音视频',type:file.type||'',size:file.size||0,savedAt:new Date().toISOString(),subtitleText:String(subtitleText),subtitleName:subtitleName||'字幕'};
+    return run('readwrite',store=>store.put(record)).then(()=>record);
+  }
   function saveRemoteVideo(rawUrl){
     const url=new URL(String(rawUrl).trim());
     if(url.protocol!=='https:'||url.username||url.password)throw Error('请粘贴 HTTPS 视频直链。');
@@ -90,6 +95,6 @@
     if(active?.videoId===id){const next=(await listVideos())[0];if(next)await activateVideo(next.id);else await remove('active-video')}
   }
   const clearMedia=()=>run('readwrite',store=>store.clear());
-  return{get,remove,listVideos,getActiveVideo,activateVideo,saveVideo,saveRemoteVideo,saveDownloadedVideo,getPosition,savePosition,getSubtitlesFor,saveSubtitles,clearSubtitles,deleteVideo,clearMedia};
+  return{get,remove,listVideos,getActiveVideo,activateVideo,saveVideo,savePairedMedia,saveRemoteVideo,saveDownloadedVideo,getPosition,savePosition,getSubtitlesFor,saveSubtitles,clearSubtitles,deleteVideo,clearMedia};
 });
 

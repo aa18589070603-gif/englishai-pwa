@@ -5,12 +5,13 @@ const path=require('node:path');
 const vm=require('node:vm');
 const core=require('../core.js');
 const vocab=require('../vocab.js');
+const batch=require('../batch-import.js');
 
 test('sample subtitles support speech and tapped words can be saved with notes',async()=>{
   const elements=new Map();
   function element(){
     const classes=new Set();
-    return{textContent:'',value:'',src:'',children:[],classList:{add:x=>classes.add(x),remove:x=>classes.delete(x),toggle:x=>classes.has(x)?classes.delete(x):classes.add(x),contains:x=>classes.has(x)},replaceChildren(){this.children=[]},append(...nodes){this.children.push(...nodes)},setAttribute(){},addEventListener(){},focus(){},play(){return Promise.resolve()},querySelectorAll(){return[]}};
+    return{textContent:'',value:'',src:'',children:[],classList:{add:x=>classes.add(x),remove:x=>classes.delete(x),toggle:x=>classes.has(x)?classes.delete(x):classes.add(x),contains:x=>classes.has(x)},replaceChildren(){this.children=[]},append(...nodes){this.children.push(...nodes)},setAttribute(){},removeAttribute(){},addEventListener(){},focus(){},pause(){},play(){return Promise.resolve()},querySelectorAll(){return[]}};
   }
   const get=id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)};
   const stageChecks=['zero','beginner','intermediate','advanced'].map(stage=>({dataset:{stage},checked:false}));
@@ -26,6 +27,7 @@ test('sample subtitles support speech and tapped words can be saved with notes',
     getPosition:async id=>positions.get(id)||0,
     savePosition:async(id,index)=>{positions.set(id,index)},
     saveVideo:async file=>{const item={id:'video:1',blob:file,name:file.name,size:file.size,subtitleText:''};mediaData.set(item.id,item);activeVideo=item.id;return item},
+    savePairedMedia:async(file,subtitleText,subtitleName)=>{const item={id:'video:3',blob:file,name:file.name,size:file.size,subtitleText,subtitleName};mediaData.set(item.id,item);return item},
     saveRemoteVideo:async url=>{const item={id:'video:2',url,name:'online.mp4',size:0,subtitleText:''};mediaData.set(item.id,item);activeVideo=item.id;return item},
     saveDownloadedVideo:async(id,blob)=>{const item={...mediaData.get(id),blob,size:blob.size};mediaData.set(id,item);return item},
     saveSubtitles:async(text,name)=>{const item=mediaData.get(activeVideo);item.subtitleText=text;item.subtitleName=name},
@@ -36,6 +38,7 @@ test('sample subtitles support speech and tapped words can be saved with notes',
     EnglishAICore:core,
     EnglishAIVocab:vocab,
     EnglishAIMedia:mediaStore,
+    EnglishAIBatch:batch,
     document:{getElementById:get,querySelector:()=>element(),querySelectorAll:selector=>selector==='[data-stage]'?stageChecks:[],createElement:element,createTextNode:text=>({textContent:text}),addEventListener(){}},
     window:{isSecureContext:true,SpeechSynthesisUtterance:Utterance,speechSynthesis:synth,localStorage:storage},
     navigator:{userAgent:'iPhone',platform:'iPhone',maxTouchPoints:1},
@@ -102,5 +105,10 @@ test('sample subtitles support speech and tapped words can be saved with notes',
   assert.equal(mediaData.get('video:2').blob.size,5);
   await get('subtitleFile').onchange({target:{files:[{name:'online.srt',text:async()=>srt}]}});
   assert.equal(mediaData.get('video:2').subtitleText,srt);
+  const batchInput={files:[{name:'EnglishPod-001.mp3',size:30,type:'audio/mpeg'},{name:'EnglishPod-001.srt',text:async()=>srt}],value:'chosen',disabled:false};
+  await get('batchFiles').onchange({target:batchInput});
+  assert.equal(mediaData.get('video:3').subtitleText,srt);
+  assert.equal(get('audioPlayer').src,'blob:test');
+  assert.match(get('batchStatus').textContent,/已导入 1 课/);
 });
 

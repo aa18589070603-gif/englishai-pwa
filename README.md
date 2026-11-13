@@ -25,6 +25,14 @@
 
 离线入门资料包在本项目工作区的 `outputs/EnglishAI-offline-starter-20261112`，含三段 VOA 原版 MP4、对应官方教学 PDF、一段 MDN GitHub 仓库中的 Sintel 短片 MP4、与短片准确对齐的英中双语 SRT、28 词 EnglishAI 单词本导入文件和中文使用说明。Sintel 视频与双语字幕可立即用于逐句循环、听写、填空和 Quiz。前三段 VOA 视频的教学 PDF 有英文对话稿，但没有与视频逐句对齐的 SRT/VTT；要在这三段视频上用逐句功能，还需制作对应时间轴字幕。资料包是起步示例，不是整套课程。[VOA 的内容使用说明](https://learningenglish.voanews.com/p/6861.html)允许在注明来源的前提下使用其原版学习资料；第三方新闻社素材不在此范围。[Sintel](https://durian.blender.org/sharing/) 由 Blender Foundation 以 CC BY 3.0 发布。
 
+另有 `outputs/EnglishAI-offline-extra-20261112.zip` 扩展包，包含三段配套 MP4 与英中双语 SRT：短对话 5 句、[A Shared Culture](https://github.com/IDPF/epub3-samples/tree/main/30/cc-shared-culture/EPUB) 56 句、[Elephants Dream](https://orange.blender.org/press/) 78 句，以及可导入的 31 词单词本。每段也有单独的 ZIP，便于按设备空间选择。双语字幕沿用来源英文字幕的时间轴；Elephants Dream 的中文文本取自 [Wikimedia Commons](https://commons.wikimedia.org/wiki/TimedText:Elephants_Dream.ogv.zh-hans.srt) 并按时间重配。请按同一编号导入视频和字幕，详细出处与许可见扩展包说明。扩展包仅保存在本地工作区，未上传到 GitHub 或 Netlify。
+
+## EnglishPod 365 课本机导入
+
+针对用户已存放在 `F:\英语资料\EnglishPod-main\EnglishPod-main` 的课程，`outputs/EnglishPod-EnglishAI-365` 包含 365 份从课程 JSON 时间轴生成的英中双语 SRT、课程目录和 37 个本地 ZIP；每包最多 10 课，同名 MP3/SRT 配对。总计 95,948 句。本站新增 MP3 播放和“批量导入课程”，可一次选择一个解压文件夹内的 MP3 与 SRT，保存到当前浏览器的素材库。导入时会跳过同名且大小相同的已有音视频；缺少同名字幕的文件不会导入。建议手机每批 10 课，空间不足时进一步减少。音频和字幕 ZIP 仅供用户从自己的电脑传到自己的手机，没有上传到 GitHub、Netlify 或其他公开站点；原始文件应保留在“文件”应用或电脑中。课程数据仓库的许可证不能自动代表其中每条音频的版权许可，公开再分发须另行确认。
+
+手机操作：将一个编号 ZIP 用 AirDrop 或 iCloud Drive 传入 iPhone“文件”应用，轻点 ZIP 解压；在 Safari 打开部署了新版的 EnglishAI，点“批量导入课程”，从解压目录同时选择 MP3 与 SRT。导入完成后到“已保存的视频”逐课打开。电脑可按同样步骤操作。每台设备的浏览器素材库独立，电脑导入不会自动同步到手机。
+
 ## 本地检查
 
 无需安装依赖。运行 `node --test tests/*.test.js` 检查字幕解析、练习题、示例字幕朗读、本机保存、单词本和 AI 服务端请求逻辑。使用任意静态服务器打开根目录进行桌面预览；麦克风、语音识别与 PWA 安装应在 HTTPS 页面测试。静态服务器不会提供 AI 服务端，AI 入口会显示“待接入”。

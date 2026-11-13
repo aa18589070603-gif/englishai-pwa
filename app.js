@@ -4,6 +4,8 @@ const {normalizeWord,localDefinition,parseDictionary,parseTranslation,readWordbo
 const mediaStore=typeof EnglishAIMedia==='undefined'?null:EnglishAIMedia;
 let cues=[],idx=-1,videoURL=null,activeRemote=false,activeVideoId=null,trackProgress=true,positionSave=Promise.resolve(),recURL=null,stream=null,recorder=null,chunks=[],recognition=null,clozeOffset=0,quizIndex=0,quizAnswered=false,activeUtterance=null;
 let mediaRevision=0;
+let audioMode=false;
+function player(){return $(audioMode?'audioPlayer':'player')}
 let storage=null;try{storage=window.localStorage}catch{}
 let wordbook=storage?readWordbook(storage):[],currentWord=null,wordRequest=0,reviewIndex=0,reviewAll=false;
 const stageChecks=[...document.querySelectorAll('[data-stage]')];
@@ -45,7 +47,7 @@ function select(i,play=false,remember=true){
   idx=i;clozeOffset=0;const cue=cues[i],current=$('current');current.replaceChildren();renderWords(current,cue.en,cue);
   if(cue.zh){const zh=document.createElement('div');zh.className='zh';zh.textContent=cue.zh;current.append(zh)}
   renderLines();renderPractice();
-  if(videoURL){$('player').currentTime=cue.start;if(play)$('player').play().catch(()=>{})}
+  if(videoURL){player().currentTime=cue.start;if(play)player().play().catch(()=>{})}
   if(remember&&trackProgress&&mediaStore&&activeVideoId){const id=activeVideoId;positionSave=positionSave.catch(()=>{}).then(()=>mediaStore.savePosition(id,i))}
 }
 function loadCues(text,source,startIndex=0,track=true){
@@ -58,9 +60,9 @@ function playCurrent(){
   if(idx<0&&cues.length)select(0);
   if(!currentCue()){setPlayStatus('请先载入字幕。');return}
   if(!videoURL){speak();return}
-  if(activeRemote&&$('player').error){speak();return}
-  const video=$('player');video.currentTime=currentCue().start;
-  video.play().then(()=>setPlayStatus('正在播放视频原句。')).catch(()=>setPlayStatus('视频无法播放，请检查文件格式。'));
+  if(activeRemote&&player().error){speak();return}
+  const media=player();media.currentTime=currentCue().start;
+  media.play().then(()=>setPlayStatus('正在播放原句。')).catch(()=>setPlayStatus('音视频无法播放，请检查文件格式。'));
 }
 function speak(){
   const cue=currentCue();if(!cue){setPlayStatus('请先载入英文字幕。');return}
@@ -230,10 +232,13 @@ document.querySelectorAll('.mode').forEach(button=>button.onclick=()=>{
 });
 let pendingVideoSave=Promise.resolve();
 function showVideo(video){
+  $('player').pause();$('audioPlayer').pause();$('player').removeAttribute('src');$('audioPlayer').removeAttribute('src');
   if(videoURL?.startsWith('blob:'))URL.revokeObjectURL(videoURL);
   activeVideoId=video.id||null;
   activeRemote=!!video.url&&!video.blob;
-  videoURL=video.blob?URL.createObjectURL(video.blob):video.url;$('player').src=videoURL;
+  audioMode=/(\.mp3|\.m4a|\.aac)(?:[?#]|$)/i.test(video.name||video.url||'')||/^audio\//i.test(video.type||video.blob?.type||'');
+  $('player').classList.toggle('hidden',audioMode);$('audioPlayer').classList.toggle('hidden',!audioMode);
+  videoURL=video.blob?URL.createObjectURL(video.blob):video.url;player().src=videoURL;
 }
 function offerFile(blob,name){
   const url=URL.createObjectURL(blob),link=document.createElement('a');
@@ -304,6 +309,32 @@ $('videoFile').onchange=async e=>{
   try{const saved=await pendingVideoSave;if(videoURL===chosenURL)activeVideoId=saved.id;await renderSavedVideos();$('localSaveStatus').textContent='视频已加入本机素材库。请保留原始文件，以防浏览器清理数据。'}
   catch(error){$('localSaveStatus').textContent='视频可在本次使用，但未能保存：'+(error.name==='QuotaExceededError'?'手机存储空间不足；以前保存的视频仍可恢复。':error.message)}
 };
+$('batchFiles').onchange=async event=>{
+  const files=[...event.target.files];event.target.value='';if(!files.length)return;
+  if(!mediaStore){$('batchStatus').textContent='当前浏览器不支持本机素材库。';return}
+  const {pairs,unmatched}=EnglishAIBatch.pairFiles(files);
+  if(!pairs.length){$('batchStatus').textContent='没有找到同名的音视频和字幕。请把同一课的 MP3 与 SRT 放在同一个文件夹后一起选中。';return}
+  const input=$('batchFiles');input.disabled=true;mediaRevision++;
+  let savedCount=0,skipped=0,first=null,failure='';
+  try{
+    const existing=new Set((await mediaStore.listVideos()).map(item=>item.name.toLocaleLowerCase()+':'+item.size));
+    for(const pair of pairs){
+      const key=pair.media.name.toLocaleLowerCase()+':'+pair.media.size;
+      if(existing.has(key)){skipped++;continue}
+      $('batchStatus').textContent='正在导入 '+(savedCount+skipped+1)+' / '+pairs.length+'：'+pair.media.name;
+      const subtitleText=await pair.subtitle.text();
+      if(!parseSubtitles(subtitleText).length){failure=pair.subtitle.name+' 没有可用的时间轴字幕。';break}
+      try{
+        const record=await mediaStore.savePairedMedia(pair.media,subtitleText,pair.subtitle.name);
+        first||=record;existing.add(key);savedCount++;
+      }catch(error){failure=error.name==='QuotaExceededError'?'本机空间不足，请减少每批课数，或删除旧素材。':error.message;break}
+    }
+    if(first){await mediaStore.activateVideo(first.id);showVideo(first);loadCues(first.subtitleText,first.subtitleName)}
+    await renderSavedVideos();
+    $('batchStatus').textContent='已导入 '+savedCount+' 课'+(skipped?'，跳过已有 '+skipped+' 课':'')+(unmatched.length?'；'+unmatched.length+' 个音视频缺少同名字幕':'')+(failure?'；导入停止：'+failure:'')+'。可在“已保存的视频”切换课程。';
+  }catch(error){$('batchStatus').textContent='导入失败：'+error.message}
+  finally{input.disabled=false}
+};
 $('connectRemoteVideo').onclick=async()=>{
   let url;
   try{url=new URL($('remoteVideoUrl').value.trim());if(url.protocol!=='https:'||url.username||url.password)throw Error('请使用 HTTPS 视频直链。');url.hash=''}
@@ -333,9 +364,11 @@ $('forgetMedia').onclick=async()=>{
 $('prev').onclick=()=>select(Math.max(0,idx-1),true);
 $('next').onclick=()=>select(Math.min(cues.length-1,idx+1),true);
 $('play').onclick=playCurrent;$('replayVideo').onclick=playCurrent;
-$('player').addEventListener('timeupdate',()=>{const cue=currentCue(),video=$('player');if(!cue||video.currentTime<cue.end)return;if($('loop').checked){video.currentTime=cue.start;if(video.paused)video.play().catch(()=>{})}else video.pause()});
-$('player').addEventListener('loadedmetadata',()=>{if(activeRemote)$('sourceStatus').textContent='在线视频已连接。导入对应的 SRT/VTT 字幕后即可逐句练习。'});
-$('player').addEventListener('error',()=>{if(activeRemote)$('sourceStatus').textContent='这个网址无法作为视频播放。请换 MP4 等文件直链，或检查网站是否禁止外站播放；已有字幕仍可用设备英文朗读。'});
+for(const media of [$('player'),$('audioPlayer')]){
+  media.addEventListener('timeupdate',()=>{const cue=currentCue();if(media!==player()||!cue||media.currentTime<cue.end)return;if($('loop').checked){media.currentTime=cue.start;if(media.paused)media.play().catch(()=>{})}else media.pause()});
+  media.addEventListener('loadedmetadata',()=>{if(media===player()&&activeRemote)$('sourceStatus').textContent='在线素材已连接。导入对应的 SRT/VTT 字幕后即可逐句练习。'});
+  media.addEventListener('error',()=>{if(media===player()&&activeRemote)$('sourceStatus').textContent='这个网址无法作为音视频播放。请使用 MP4/MP3 文件直链；已有字幕仍可用设备英文朗读。'});
+}
 $('speakShadow').onclick=speak;$('hearDictation').onclick=speak;
 $('checkDictation').onclick=()=>{const cue=currentCue();if(!cue){setFeedback('dictationFeedback','请先载入字幕。','needs-work');return}const result=feedbackText(cue.en,$('dictationInput').value);setFeedback('dictationFeedback',result.message,result.kind)};
 $('checkCloze').onclick=()=>{const cue=currentCue(),cloze=cue&&clozeFor(cue,clozeOffset);if(!cloze){setFeedback('clozeFeedback','请先载入英文字幕。','needs-work');return}const result=compareText(cloze.answer,$('clozeInput').value);setFeedback('clozeFeedback',result.exact?'答对了：'+cloze.answer:'参考答案：'+cloze.answer,result.exact?'good':'needs-work')};
